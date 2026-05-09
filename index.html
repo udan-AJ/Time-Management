@@ -3,164 +3,201 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure OT Cloud</title>
+    <title>Advanced OT Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Firebase Config
         const firebaseConfig = {
             apiKey: "AIzaSyBT3joJWX-dsz4C9-wKsffepSpXypn1n9E",
             authDomain: "time-management-28962.firebaseapp.com",
             projectId: "time-management-28962",
             storageBucket: "time-management-28962.firebasestorage.app",
             messagingSenderId: "813174935711",
-            appId: "1:813174935711:web:066f4442e08e600cf512aa",
-            measurementId: "G-6WGGG4P12N"
+            appId: "1:813174935711:web:066f4442e08e600cf512aa"
         };
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // UI Elements
-        const authScreen = document.getElementById('authScreen');
-        const appScreen = document.getElementById('appScreen');
-        const userEmailDisp = document.getElementById('userEmailDisp');
-        const historyList = document.getElementById('historyList');
+        // --- Configuration & Holidays (2026 Example) ---
+        const holidays = ["2026-01-14", "2026-02-04", "2026-04-13", "2026-04-14", "2026-05-01"]; 
+        const poyaDays = ["2026-05-01", "2026-05-31"]; // Add your specific dates here
 
-        // --- AUTHENTICATION FUNCTIONS ---
-        window.handleAuth = async (type) => {
-            // .trim() is added here to fix the "invalid-email" error
-            const email = document.getElementById('email').value.trim();
-            const pass = document.getElementById('pass').value;
-
-            if (!email || !pass) {
-                alert("කරුණාකර Email සහ Password ඇතුලත් කරන්න.");
-                return;
-            }
-
-            try {
-                if (type === 'signup') {
-                    await createUserWithEmailAndPassword(auth, email, pass);
-                } else {
-                    await signInWithEmailAndPassword(auth, email, pass);
-                }
-            } catch (e) { 
-                console.error(e);
-                alert("Error: " + e.message); 
-            }
+        window.onload = () => {
+            const monthSelect = document.getElementById('monthSelect');
+            const yearSelect = document.getElementById('yearSelect');
+            const currentMonth = new Date().getMonth();
+            monthSelect.value = currentMonth;
+            
+            monthSelect.addEventListener('change', renderSheet);
+            yearSelect.addEventListener('change', renderSheet);
         };
 
-        window.logout = () => signOut(auth);
-
-        // --- MONITOR AUTH STATE ---
         onAuthStateChanged(auth, (user) => {
             if (user) {
-                authScreen.classList.add('hidden');
-                appScreen.classList.remove('hidden');
-                userEmailDisp.innerText = user.email;
-                loadData(user.uid);
+                document.getElementById('authScreen').classList.add('hidden');
+                document.getElementById('appScreen').classList.remove('hidden');
+                renderSheet();
             } else {
-                authScreen.classList.remove('hidden');
-                appScreen.classList.add('hidden');
+                document.getElementById('authScreen').classList.remove('hidden');
+                document.getElementById('appScreen').classList.add('hidden');
             }
         });
 
-        // --- DATABASE FUNCTIONS ---
-        window.addEntry = async () => {
+        async function renderSheet() {
             const user = auth.currentUser;
-            const salary = parseFloat(document.getElementById('salary').value);
-            const otHours = parseFloat(document.getElementById('otHours').value);
-            const otRate = parseFloat(document.getElementById('otRate').value);
+            if (!user) return;
 
-            if(!salary || !otHours) return alert("විස්තර පුරවන්න!");
+            const month = parseInt(document.getElementById('monthSelect').value);
+            const year = parseInt(document.getElementById('yearSelect').value);
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const container = document.getElementById('sheetContainer');
+            container.innerHTML = "පූරණය වෙමින්...";
 
-            const amount = (salary / 160) * otRate * otHours;
+            // Load existing data for this month from Firebase
+            const monthId = `${year}-${month + 1}`;
+            const docRef = doc(db, "users", user.uid, "months", monthId);
+            const docSnap = await getDoc(docRef);
+            const savedData = docSnap.exists() ? docSnap.data() : {};
 
-            try {
-                await addDoc(collection(db, "ot_records"), {
-                    uid: user.uid,
-                    hours: otHours,
-                    amount: amount.toFixed(2),
-                    timestamp: new Date()
-                });
-                document.getElementById('otHours').value = "";
-            } catch (e) {
-                alert("Data Save කිරීමට නොහැක: " + e.message);
+            container.innerHTML = "";
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dateObj = new Date(year, month, d);
+                const dateStr = dateObj.toISOString().split('T')[0];
+                const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+                const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+                const isHoliday = holidays.includes(dateStr) || poyaDays.includes(dateStr);
+
+                let rowClass = "bg-white border-slate-100";
+                if (isWeekend) rowClass = "bg-orange-50 border-orange-100";
+                if (isHoliday) rowClass = "bg-red-50 border-red-100";
+
+                const dayData = savedData[d] || { in: "", out: "" };
+
+                const row = document.createElement('div');
+                row.className = `flex items-center gap-2 p-3 border-b ${rowClass} transition-all`;
+                row.innerHTML = `
+                    <div class="w-12 text-center">
+                        <span class="block text-xs font-bold ${isWeekend || isHoliday ? 'text-red-500' : 'text-slate-400'}">${dayName}</span>
+                        <span class="text-lg font-black text-slate-700">${d}</span>
+                    </div>
+                    <div class="flex-1 grid grid-cols-2 gap-2">
+                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-lg border text-sm focus:ring-2 focus:ring-blue-400 outline-none">
+                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-lg border text-sm focus:ring-2 focus:ring-blue-400 outline-none">
+                    </div>
+                    <div id="hrs-${d}" class="w-16 text-right font-bold text-blue-600 text-sm">
+                        ${calculateHours(dayData.in, dayData.out)}h
+                    </div>
+                `;
+                container.appendChild(row);
             }
+        }
+
+        function calculateHours(inTime, outTime) {
+            if (!inTime || !outTime) return 0;
+            let start = new Date(`2000-01-01T${inTime}`);
+            let end = new Date(`2000-01-01T${outTime}`);
+            
+            if (end <= start) {
+                // Shift crossed midnight - add 24 hours to end time
+                end = new Date(`2000-01-02T${outTime}`);
+            }
+            
+            const diff = (end - start) / (1000 * 60 * 60);
+            return diff.toFixed(1);
+        }
+
+        window.updateRecord = async (day, type, value) => {
+            const user = auth.currentUser;
+            const month = parseInt(document.getElementById('monthSelect').value);
+            const year = parseInt(document.getElementById('yearSelect').value);
+            const monthId = `${year}-${month + 1}`;
+            
+            const docRef = doc(db, "users", user.uid, "months", monthId);
+            const docSnap = await getDoc(docRef);
+            let data = docSnap.exists() ? docSnap.data() : {};
+            
+            if (!data[day]) data[day] = { in: "", out: "" };
+            data[day][type] = value;
+
+            // Update UI Total for the row
+            document.getElementById(`hrs-${day}`).innerText = calculateHours(data[day].in, data[day].out) + "h";
+
+            // Save to Firebase
+            await setDoc(docRef, data, { merge: true });
         };
 
-        function loadData(uid) {
-            const q = query(
-                collection(db, "ot_records"), 
-                where("uid", "==", uid), 
-                orderBy("timestamp", "desc")
-            );
+        window.handleLogin = () => {
+            const email = document.getElementById('email').value;
+            const pass = document.getElementById('pass').value;
+            signInWithEmailAndPassword(auth, email, pass).catch(err => alert(err.message));
+        };
 
-            onSnapshot(q, (snapshot) => {
-                historyList.innerHTML = "";
-                snapshot.forEach((doc) => {
-                    const data = doc.data();
-                    // Basic check to ensure timestamp exists before calling toDate()
-                    const dateStr = data.timestamp ? data.timestamp.toDate().toLocaleDateString() : "Pending...";
-                    
-                    const div = document.createElement('div');
-                    div.className = "flex justify-between p-4 bg-white rounded-2xl shadow-sm mb-2 border border-slate-100";
-                    div.innerHTML = `
-                        <div class="text-xs text-slate-500 font-bold">${dateStr}<br><span class="text-slate-800 text-sm">${data.hours} Hours</span></div>
-                        <div class="text-blue-600 font-black text-lg">Rs. ${data.amount}</div>
-                    `;
-                    historyList.appendChild(div);
-                });
-            }, (error) => {
-                console.error("Snapshot error:", error);
-            });
-        }
+        window.logout = () => signOut(auth);
+        window.renderSheet = renderSheet;
+
     </script>
 </head>
-<body class="bg-slate-50 min-h-screen font-sans">
+<body class="bg-slate-100 min-h-screen pb-20">
 
-    <div id="authScreen" class="max-w-md mx-auto mt-20 p-8 text-center">
-        <h1 class="text-3xl font-black text-slate-800 mb-2">OT Tracker Pro</h1>
-        <p class="text-slate-500 mb-8 text-sm">ගිණුමට ඇතුළු වන්න හෝ අලුත් එකක් සාදන්න</p>
-        <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 rounded-2xl border outline-none focus:ring-2 focus:ring-blue-400">
-        <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-6 rounded-2xl border outline-none focus:ring-2 focus:ring-blue-400">
-        <div class="grid grid-cols-2 gap-4">
-            <button onclick="handleAuth('login')" class="bg-blue-600 text-white font-bold py-4 rounded-2xl">Login</button>
-            <button onclick="handleAuth('signup')" class="bg-slate-200 text-slate-700 font-bold py-4 rounded-2xl text-sm">Sign Up</button>
+    <div id="authScreen" class="max-w-md mx-auto pt-20 px-6">
+        <div class="bg-white p-8 rounded-[2.5rem] shadow-xl text-center">
+            <h1 class="text-2xl font-black mb-6">Attendance Cloud</h1>
+            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border outline-none">
+            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-6 bg-slate-50 rounded-2xl border outline-none">
+            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg">Login</button>
         </div>
     </div>
 
-    <div id="appScreen" class="hidden max-w-md mx-auto pb-10">
-        <div class="bg-blue-600 p-6 text-white flex justify-between items-center rounded-b-[2.5rem] shadow-xl">
+    <div id="appScreen" class="hidden max-w-2xl mx-auto">
+        <!-- Header -->
+        <div class="bg-blue-600 p-6 text-white sticky top-0 z-10 shadow-lg flex justify-between items-center">
             <div>
-                <p class="text-[10px] font-bold opacity-70 uppercase tracking-widest">Active Account</p>
-                <h2 id="userEmailDisp" class="text-sm font-bold truncate w-40">user@email.com</h2>
-            </div>
-            <button onclick="logout()" class="bg-blue-500 hover:bg-blue-700 p-3 rounded-xl text-xs font-bold transition">Sign Out</button>
-        </div>
-
-        <div class="px-4 mt-6 space-y-6">
-            <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
-                <div class="grid grid-cols-2 gap-3 mb-4">
-                    <input type="number" id="salary" placeholder="පඩිය (Basic)" class="p-3 bg-slate-50 rounded-xl outline-none text-sm border focus:border-blue-300">
-                    <select id="otRate" class="p-3 bg-slate-50 rounded-xl outline-none text-sm border">
-                        <option value="1.5">1.5x Rate</option>
-                        <option value="2.0">2.0x Rate</option>
+                <h2 class="font-black text-xl">Daily Sheet</h2>
+                <div class="flex gap-2 mt-2">
+                    <select id="yearSelect" class="bg-blue-500 text-xs p-1 rounded font-bold outline-none">
+                        <option value="2026">2026</option>
+                        <option value="2025">2025</option>
+                    </select>
+                    <select id="monthSelect" class="bg-blue-500 text-xs p-1 rounded font-bold outline-none">
+                        <option value="0">January</option>
+                        <option value="1">February</option>
+                        <option value="2">March</option>
+                        <option value="3">April</option>
+                        <option value="4">May</option>
+                        <option value="5">June</option>
+                        <option value="6">July</option>
+                        <option value="7">August</option>
+                        <option value="8">September</option>
+                        <option value="9">October</option>
+                        <option value="10">November</option>
+                        <option value="11">December</option>
                     </select>
                 </div>
-                <label class="text-[10px] font-bold text-slate-400 uppercase ml-2">OT පැය ගණන</label>
-                <input type="number" id="otHours" placeholder="0" class="w-full mt-1 p-5 bg-blue-50 border-2 border-blue-100 rounded-2xl outline-none text-3xl font-black text-center text-blue-700 mb-4">
-                <button onclick="addEntry()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg active:scale-95 transition">Record එක Save කරන්න</button>
             </div>
+            <button onclick="logout()" class="text-xs bg-white/20 px-3 py-2 rounded-lg font-bold">Sign Out</button>
+        </div>
 
-            <div>
-                <h3 class="text-slate-700 font-bold mb-3 ml-2">History වාර්තා</h3>
-                <div id="historyList" class="space-y-2"></div>
-            </div>
+        <!-- Legend -->
+        <div class="flex gap-4 p-4 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            <div class="flex items-center gap-1"><span class="w-3 h-3 bg-orange-200 rounded-full"></span> Weekend</div>
+            <div class="flex items-center gap-1"><span class="w-3 h-3 bg-red-200 rounded-full"></span> Holiday/Poya</div>
+        </div>
+
+        <!-- Sheet Container -->
+        <div id="sheetContainer" class="bg-white mx-4 rounded-3xl shadow-sm overflow-hidden border border-slate-200">
+            <!-- Rows injected here -->
+        </div>
+
+        <div class="p-6 text-center text-[10px] text-slate-400 uppercase tracking-widest leading-loose">
+            © All rights reserved.<br>
+            Developed by Udan A. Jayawardene<br>
+            UDAN JAY™ DIGITAL SOLUTION
         </div>
     </div>
 
