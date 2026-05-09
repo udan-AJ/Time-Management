@@ -87,8 +87,8 @@
                         <span class="text-lg font-black text-slate-700">${d}</span>
                     </div>
                     <div class="flex-1 grid grid-cols-2 gap-2">
-                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-lg border text-sm focus:ring-2 focus:ring-blue-400 outline-none">
-                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-lg border text-sm focus:ring-2 focus:ring-blue-400 outline-none">
+                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-lg border text-sm focus:ring-2 focus:ring-blue-400 outline-none" placeholder="In">
+                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-lg border text-sm focus:ring-2 focus:ring-blue-400 outline-none" placeholder="Out">
                     </div>
                     <div id="hrs-${d}" class="w-16 text-right font-bold text-blue-600 text-sm">
                         ${calculateHours(dayData.in, dayData.out)}h
