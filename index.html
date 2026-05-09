@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced OT Tracker | UDAN JAY™</title>
+    <title>Advanced OT Tracker | CIC Livestock Solutions</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, collection, query, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Firebase Configuration
         const firebaseConfig = {
             apiKey: "AIzaSyBT3joJWX-dsz4C9-wKsffepSpXypn1n9E",
             authDomain: "time-management-28962.firebaseapp.com",
@@ -38,53 +39,83 @@
             }
         });
 
-        // --- 1. HOLIDAY MANAGEMENT ---
-        async function loadHolidays() {
-            const user = auth.currentUser;
-            if (!user) return;
-            const q = query(collection(db, "users", user.uid, "holidays"));
-            const querySnapshot = await getDocs(q);
-            userHolidays = [];
-            querySnapshot.forEach((doc) => userHolidays.push(doc.id));
-            renderHolidayList();
-        }
+        // --- 1. EXCEL IMPORT LOGIC (CUSTOMIZED FOR YOUR IMAGE) ---
+        window.importExcel = () => {
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.xlsx, .xls';
+            
+            fileInput.onchange = async (e) => {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                
+                reader.onload = async (event) => {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    
+                    // Range 11 means it starts reading from Row 12
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11 }); 
+                    
+                    if(jsonData.length === 0) return alert("Excel දත්ත හමු වුනේ නැත!");
 
-        window.addHoliday = async () => {
-            const date = document.getElementById('holidayInput').value;
-            if (!date) return alert("කරුණාකර දිනයක් තෝරන්න");
-            const user = auth.currentUser;
-            await setDoc(doc(db, "users", user.uid, "holidays", date), { active: true });
-            await loadHolidays();
-            renderSheet();
+                    const user = auth.currentUser;
+                    const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
+                    const docRef = doc(db, "users", user.uid, "months", monthId);
+                    
+                    const docSnap = await getDoc(docRef);
+                    let currentData = docSnap.exists() ? docSnap.data() : {};
+
+                    jsonData.forEach(row => {
+                        let rawDate = row["Date"];
+                        let inTime = row["Check In"];
+                        let outTime = row["Check Out"];
+
+                        if(rawDate && inTime !== undefined && outTime !== undefined) {
+                            // Extracting day from YYYY-MM-DD
+                            let dayMatch = String(rawDate).match(/\d{4}-\d{2}-(\d{2})/);
+                            let day = dayMatch ? parseInt(dayMatch[1]) : null;
+
+                            if (day) {
+                                currentData[day] = { 
+                                    in: formatTime(inTime), 
+                                    out: formatTime(outTime) 
+                                };
+                            }
+                        }
+                    });
+
+                    await setDoc(docRef, currentData);
+                    alert("Excel දත්ත සාර්ථකව පූරණය කළා!");
+                    renderSheet();
+                };
+                reader.readAsArrayBuffer(file);
+            };
+            fileInput.click();
         };
 
-        window.removeHoliday = async (date) => {
-            const user = auth.currentUser;
-            await deleteDoc(doc(db, "users", user.uid, "holidays", date));
-            await loadHolidays();
-            renderSheet();
-        };
-
-        function renderHolidayList() {
-            const list = document.getElementById('holidayList');
-            list.innerHTML = userHolidays.length ? userHolidays.map(date => `
-                <div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl mb-2 border border-slate-200">
-                    <span class="font-bold text-slate-700">${date}</span>
-                    <button onclick="removeHoliday('${date}')" class="text-red-500 text-xs font-black uppercase">Remove</button>
-                </div>
-            `).join('') : `<p class="text-slate-400 text-xs text-center py-4">නිවාඩු දින ඇතුලත් කර නැත.</p>`;
+        function formatTime(val) {
+            if (typeof val === 'number') {
+                const totalMinutes = Math.round(val * 24 * 60);
+                const hours = Math.floor(totalMinutes / 60);
+                const mins = totalMinutes % 60;
+                return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+            }
+            if (typeof val === 'string' && val.includes(':')) {
+                let parts = val.split(':');
+                return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+            }
+            return val;
         }
 
-        // --- 2. CALCULATION LOGIC (ROUNDING 0.25 / 0.55) ---
+        // --- 2. CALCULATION LOGIC (0.25 / 0.55 ROUNDING) ---
         function calculateHours(inTime, outTime) {
-            if (!inTime || !outTime) return 0;
+            if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") return 0;
             
             let start = new Date(`2000-01-01T${inTime}`);
             let end = new Date(`2000-01-01T${outTime}`);
             
-            if (end <= start) {
-                end = new Date(`2000-01-02T${outTime}`); // Night Shift Logic
-            }
+            if (end <= start) end = new Date(`2000-01-02T${outTime}`);
             
             let rawHours = (end - start) / (1000 * 60 * 60);
             let integerPart = Math.floor(rawHours);
@@ -102,20 +133,49 @@
             return (integerPart + roundedDecimal).toFixed(1);
         }
 
-        // --- 3. SHEET RENDERING ---
+        // --- 3. CORE APP FUNCTIONS ---
+        async function loadHolidays() {
+            const user = auth.currentUser;
+            const q = query(collection(db, "users", user.uid, "holidays"));
+            const querySnapshot = await getDocs(q);
+            userHolidays = [];
+            querySnapshot.forEach((doc) => userHolidays.push(doc.id));
+            renderHolidayList();
+        }
+
+        window.addHoliday = async () => {
+            const date = document.getElementById('holidayInput').value;
+            if (!date) return;
+            await setDoc(doc(db, "users", auth.currentUser.uid, "holidays", date), { active: true });
+            await loadHolidays();
+            renderSheet();
+        };
+
+        window.removeHoliday = async (date) => {
+            await deleteDoc(doc(db, "users", auth.currentUser.uid, "holidays", date));
+            await loadHolidays();
+            renderSheet();
+        };
+
+        function renderHolidayList() {
+            const list = document.getElementById('holidayList');
+            list.innerHTML = userHolidays.map(date => `
+                <div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl mb-2 border">
+                    <span class="font-bold text-slate-700">${date}</span>
+                    <button onclick="removeHoliday('${date}')" class="text-red-500 text-[10px] font-black">REMOVE</button>
+                </div>
+            `).join('');
+        }
+
         async function renderSheet() {
             const user = auth.currentUser;
             if (!user) return;
-
             const month = parseInt(document.getElementById('monthSelect').value);
             const year = parseInt(document.getElementById('yearSelect').value);
             const container = document.getElementById('sheetContainer');
-            container.innerHTML = "<div class='p-10 text-center text-slate-400'>පූරණය වෙමින්...</div>";
-
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const monthId = `${year}-${month + 1}`;
-            const docRef = doc(db, "users", user.uid, "months", monthId);
-            const docSnap = await getDoc(docRef);
+            const docSnap = await getDoc(doc(db, "users", user.uid, "months", monthId));
             const savedData = docSnap.exists() ? docSnap.data() : {};
 
             container.innerHTML = "";
@@ -123,30 +183,25 @@
 
             for (let d = 1; d <= daysInMonth; d++) {
                 const dateObj = new Date(year, month, d);
-                const dateStr = dateObj.toLocaleDateString('en-CA'); // YYYY-MM-DD
+                const dateStr = dateObj.toLocaleDateString('en-CA');
                 const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
                 const isHoliday = userHolidays.includes(dateStr);
-
-                let rowClass = "bg-white";
-                if (isHoliday) rowClass = "bg-red-50 border-red-100";
-                else if (isWeekend) rowClass = "bg-orange-50 border-orange-100";
-
                 const dayData = savedData[d] || { in: "", out: "" };
                 const hrs = calculateHours(dayData.in, dayData.out);
                 monthlyTotal += parseFloat(hrs);
 
                 const row = document.createElement('div');
-                row.className = `flex items-center gap-2 p-3 border-b border-slate-100 ${rowClass}`;
+                row.className = `flex items-center gap-2 p-3 border-b ${isHoliday ? 'bg-red-50' : (isWeekend ? 'bg-orange-50' : 'bg-white')}`;
                 row.innerHTML = `
                     <div class="w-10 text-center">
-                        <span class="block text-[9px] font-bold uppercase ${isHoliday || isWeekend ? 'text-red-400' : 'text-slate-400'}">${dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                        <span class="text-lg font-black text-slate-700 leading-none">${d}</span>
+                        <span class="block text-[8px] font-bold text-slate-400 uppercase">${dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                        <span class="text-lg font-black text-slate-700">${d}</span>
                     </div>
                     <div class="flex-1 grid grid-cols-2 gap-2">
-                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-blue-400 transition">
-                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-blue-400 transition">
+                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400">
+                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400">
                     </div>
-                    <div id="hrs-${d}" class="w-14 text-right font-black text-blue-600 text-sm">${hrs}h</div>
+                    <div class="w-12 text-right font-black text-blue-600 text-xs">${hrs}h</div>
                 `;
                 container.appendChild(row);
             }
@@ -157,110 +212,81 @@
             const user = auth.currentUser;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
             const docRef = doc(db, "users", user.uid, "months", monthId);
-            
             const docSnap = await getDoc(docRef);
             let data = docSnap.exists() ? docSnap.data() : {};
             if (!data[day]) data[day] = { in: "", out: "" };
             data[day][type] = value;
-
             await setDoc(docRef, data, { merge: true });
-            renderSheet(); // Re-render to update totals
+            renderSheet();
         };
 
-        // --- 4. NAVIGATION & AUTH ---
         window.switchTab = (tab) => {
             document.getElementById('sheetView').classList.toggle('hidden', tab !== 'sheet');
             document.getElementById('holidayView').classList.toggle('hidden', tab !== 'holidays');
-            
             document.getElementById('tabSheet').className = tab === 'sheet' ? 'flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase' : 'flex-1 py-4 text-slate-400 font-bold text-xs uppercase';
             document.getElementById('tabHolidays').className = tab === 'holidays' ? 'flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase' : 'flex-1 py-4 text-slate-400 font-bold text-xs uppercase';
         };
 
-        window.handleLogin = () => {
-            const email = document.getElementById('email').value;
-            const pass = document.getElementById('pass').value;
-            signInWithEmailAndPassword(auth, email, pass).catch(err => alert("Login Error: " + err.message));
-        };
-
+        window.handleLogin = () => signInWithEmailAndPassword(auth, document.getElementById('email').value, document.getElementById('pass').value).catch(err => alert(err.message));
         window.logout = () => signOut(auth);
         window.renderSheet = renderSheet;
 
     </script>
 </head>
-<body class="bg-slate-50 min-h-screen font-sans text-slate-900">
+<body class="bg-slate-50 min-h-screen text-slate-900">
 
-    <!-- Auth Screen -->
     <div id="authScreen" class="max-w-md mx-auto pt-24 px-6">
-        <div class="bg-white p-10 rounded-[3rem] shadow-2xl text-center border border-slate-100">
-            <div class="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-lg shadow-blue-200">
-                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-            </div>
-            <h1 class="text-3xl font-black mb-2">Secure Cloud</h1>
-            <p class="text-slate-400 text-sm mb-8 font-medium">වැඩ කල පැය වාර්තා පද්ධතිය</p>
-            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border border-slate-200 outline-none focus:border-blue-400 transition">
-            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border border-slate-200 outline-none focus:border-blue-400 transition">
-            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-100 hover:scale-[1.02] active:scale-95 transition">LOGIN</button>
+        <div class="bg-white p-10 rounded-[3rem] shadow-xl text-center">
+            <h1 class="text-3xl font-black mb-8">Secure Cloud</h1>
+            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border outline-none">
+            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border outline-none">
+            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-lg">LOGIN</button>
         </div>
     </div>
 
-    <!-- Main App -->
     <div id="appScreen" class="hidden max-w-lg mx-auto">
-        <!-- Tabs -->
-        <div class="bg-white flex text-center border-b border-slate-200 sticky top-0 z-20">
-            <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase">Daily Sheet</button>
-            <button id="tabHolidays" onclick="switchTab('holidays')" class="flex-1 py-4 text-slate-400 font-bold text-xs uppercase">Holidays</button>
+        <div class="bg-white flex text-center border-b sticky top-0 z-20">
+            <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black">DAILY SHEET</button>
+            <button id="tabHolidays" onclick="switchTab('holidays')" class="flex-1 py-4 text-slate-400 font-bold">HOLIDAYS</button>
         </div>
 
-        <!-- View 1: Sheet -->
-        <div id="sheetView">
-            <div class="p-4">
-                <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl shadow-blue-200 mb-6 relative overflow-hidden">
-                    <div class="relative z-10 flex justify-between items-start">
-                        <div>
-                            <p class="text-[10px] font-black uppercase opacity-60 tracking-widest mb-1">Monthly Overview</p>
-                            <h2 id="totalHrs" class="text-4xl font-black tracking-tight">0.0 Hrs</h2>
-                            <div class="flex gap-2 mt-4">
-                                <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-black outline-none border border-white/10">
-                                    <option value="2026">2026</option><option value="2025">2025</option>
-                                </select>
-                                <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-black outline-none border border-white/10">
-                                    <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>
-                                    <option value="3">APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>
-                                    <option value="6">JULY</option><option value="7">AUGUST</option><option value="8">SEPTEMBER</option>
-                                    <option value="9">OCTOBER</option><option value="10">NOVEMBER</option><option value="11">DECEMBER</option>
-                                </select>
-                            </div>
-                        </div>
-                        <button onclick="logout()" class="p-3 bg-white/20 rounded-2xl hover:bg-white/30 transition">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
-                        </button>
+        <div id="sheetView" class="p-4">
+            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6 flex justify-between items-center">
+                <div>
+                    <h2 id="totalHrs" class="text-4xl font-black">0.0 Hrs</h2>
+                    <div class="flex gap-2 mt-4">
+                        <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold outline-none">
+                            <option value="2026">2026</option><option value="2025">2025</option>
+                        </select>
+                        <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold outline-none">
+                            <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>
+                            <option value="3">APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>
+                            <option value="6">JULY</option><option value="7">AUGUST</option><option value="8">SEPTEMBER</option>
+                            <option value="9">OCTOBER</option><option value="10">NOVEMBER</option><option value="11">DECEMBER</option>
+                        </select>
                     </div>
                 </div>
-                <div id="sheetContainer" class="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden"></div>
+                <div class="flex flex-col gap-2">
+                    <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black">IMPORT EXCEL</button>
+                    <button onclick="logout()" class="bg-white/20 text-[10px] px-4 py-2 rounded-xl font-black">LOGOUT</button>
+                </div>
             </div>
+            <div id="sheetContainer" class="bg-white rounded-3xl shadow-sm border overflow-hidden"></div>
         </div>
 
-        <!-- View 2: Holidays -->
         <div id="holidayView" class="hidden p-6">
-            <div class="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200 mb-8">
-                <h3 class="font-black text-xl mb-2 text-slate-800">Add Holiday</h3>
-                <p class="text-xs text-slate-400 mb-6 font-medium">පෝය සහ අනෙකුත් විශේෂ නිවාඩු දින මෙතනින් ඇතුලත් කරන්න.</p>
-                <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none focus:ring-2 focus:ring-blue-400 transition">
-                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-100 active:scale-95 transition">ADD TO LIST</button>
+            <div class="bg-white p-6 rounded-[2rem] shadow-sm border mb-6">
+                <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border rounded-2xl mb-4 outline-none">
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl">ADD HOLIDAY</button>
             </div>
-            <h4 class="text-[10px] font-black text-slate-400 mb-4 ml-4 uppercase tracking-widest">Saved Holiday List</h4>
-            <div id="holidayList" class="px-2"></div>
+            <div id="holidayList"></div>
         </div>
 
-        <!-- Footer -->
-        <div class="py-12 text-center">
-            <p class="text-[10px] font-bold text-slate-300 uppercase tracking-[0.2em] leading-relaxed">
-                © All rights reserved.<br>
-                Developed by Udan A. Jayawardene<br>
-                <span class="text-blue-200">UDAN JAY™ DIGITAL SOLUTION</span>
-            </p>
+        <div class="py-12 text-center text-[10px] text-slate-300 font-bold uppercase tracking-widest">
+            © All rights reserved.<br>
+            Developed by Udan A. Jayawardene<br>
+            <span class="text-blue-200">UDAN JAY™ DIGITAL SOLUTION</span>
         </div>
     </div>
-
 </body>
 </html>
