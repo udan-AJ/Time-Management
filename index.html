@@ -10,16 +10,16 @@
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // 1. ඔබේ Firebase Config එක මෙතනට දාන්න
+        // Firebase Config
         const firebaseConfig = {
-  apiKey: "AIzaSyBT3joJWX-dsz4C9-wKsffepSpXypn1n9E",
-  authDomain: "time-management-28962.firebaseapp.com",
-  projectId: "time-management-28962",
-  storageBucket: "time-management-28962.firebasestorage.app",
-  messagingSenderId: "813174935711",
-  appId: "1:813174935711:web:066f4442e08e600cf512aa",
-  measurementId: "G-6WGGG4P12N"
-        }
+            apiKey: "AIzaSyBT3joJWX-dsz4C9-wKsffepSpXypn1n9E",
+            authDomain: "time-management-28962.firebaseapp.com",
+            projectId: "time-management-28962",
+            storageBucket: "time-management-28962.firebasestorage.app",
+            messagingSenderId: "813174935711",
+            appId: "1:813174935711:web:066f4442e08e600cf512aa",
+            measurementId: "G-6WGGG4P12N"
+        };
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -33,12 +33,25 @@
 
         // --- AUTHENTICATION FUNCTIONS ---
         window.handleAuth = async (type) => {
-            const email = document.getElementById('email').value;
+            // .trim() is added here to fix the "invalid-email" error
+            const email = document.getElementById('email').value.trim();
             const pass = document.getElementById('pass').value;
+
+            if (!email || !pass) {
+                alert("කරුණාකර Email සහ Password ඇතුලත් කරන්න.");
+                return;
+            }
+
             try {
-                if (type === 'signup') await createUserWithEmailAndPassword(auth, email, pass);
-                else await signInWithEmailAndPassword(auth, email, pass);
-            } catch (e) { alert("Error: " + e.message); }
+                if (type === 'signup') {
+                    await createUserWithEmailAndPassword(auth, email, pass);
+                } else {
+                    await signInWithEmailAndPassword(auth, email, pass);
+                }
+            } catch (e) { 
+                console.error(e);
+                alert("Error: " + e.message); 
+            }
         };
 
         window.logout = () => signOut(auth);
@@ -67,29 +80,43 @@
 
             const amount = (salary / 160) * otRate * otHours;
 
-            await addDoc(collection(db, "ot_records"), {
-                uid: user.uid,
-                hours: otHours,
-                amount: amount.toFixed(2),
-                timestamp: new Date()
-            });
-            document.getElementById('otHours').value = "";
+            try {
+                await addDoc(collection(db, "ot_records"), {
+                    uid: user.uid,
+                    hours: otHours,
+                    amount: amount.toFixed(2),
+                    timestamp: new Date()
+                });
+                document.getElementById('otHours').value = "";
+            } catch (e) {
+                alert("Data Save කිරීමට නොහැක: " + e.message);
+            }
         };
 
         function loadData(uid) {
-            const q = query(collection(db, "ot_records"), where("uid", "==", uid), orderBy("timestamp", "desc"));
+            const q = query(
+                collection(db, "ot_records"), 
+                where("uid", "==", uid), 
+                orderBy("timestamp", "desc")
+            );
+
             onSnapshot(q, (snapshot) => {
                 historyList.innerHTML = "";
                 snapshot.forEach((doc) => {
                     const data = doc.data();
+                    // Basic check to ensure timestamp exists before calling toDate()
+                    const dateStr = data.timestamp ? data.timestamp.toDate().toLocaleDateString() : "Pending...";
+                    
                     const div = document.createElement('div');
                     div.className = "flex justify-between p-4 bg-white rounded-2xl shadow-sm mb-2 border border-slate-100";
                     div.innerHTML = `
-                        <div class="text-xs text-slate-500 font-bold">${data.timestamp.toDate().toLocaleDateString()}<br><span class="text-slate-800 text-sm">${data.hours} Hours</span></div>
+                        <div class="text-xs text-slate-500 font-bold">${dateStr}<br><span class="text-slate-800 text-sm">${data.hours} Hours</span></div>
                         <div class="text-blue-600 font-black text-lg">Rs. ${data.amount}</div>
                     `;
                     historyList.appendChild(div);
                 });
+            }, (error) => {
+                console.error("Snapshot error:", error);
             });
         }
     </script>
