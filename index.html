@@ -39,7 +39,7 @@
             }
         });
 
-        // --- 1. EXCEL IMPORT LOGIC (CUSTOMIZED FOR YOUR IMAGE) ---
+        // --- 1. IMPROVED EXCEL IMPORT LOGIC ---
         window.importExcel = () => {
             const fileInput = document.createElement('input');
             fileInput.type = 'file';
@@ -54,40 +54,59 @@
                     const workbook = XLSX.read(data, { type: 'array' });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // Range 11 means it starts reading from Row 12
+                    // Row 12 සිට කියවීම ආරම්භ කරයි (Index 11)
                     const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11 }); 
                     
-                    if(jsonData.length === 0) return alert("Excel දත්ත හමු වුනේ නැත!");
+                    if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
                     const user = auth.currentUser;
-                    const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
-                    const docRef = doc(db, "users", user.uid, "months", monthId);
+                    const selectedYear = document.getElementById('yearSelect').value;
+                    const selectedMonth = parseInt(document.getElementById('monthSelect').value) + 1;
+                    const monthId = `${selectedYear}-${selectedMonth}`;
                     
+                    const docRef = doc(db, "users", user.uid, "months", monthId);
                     const docSnap = await getDoc(docRef);
                     let currentData = docSnap.exists() ? docSnap.data() : {};
+                    let successCount = 0;
 
                     jsonData.forEach(row => {
-                        let rawDate = row["Date"];
-                        let inTime = row["Check In"];
-                        let outTime = row["Check Out"];
+                        // Column නම් වල හිස්තැන් තිබුණත් ඒවා හඳුනා ගැනීමට (Case-insensitive check)
+                        let dateKey = Object.keys(row).find(k => k.trim().toLowerCase() === "date");
+                        let inKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check in");
+                        let outKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check out");
+
+                        let rawDate = row[dateKey];
+                        let inTime = row[inKey];
+                        let outTime = row[outKey];
 
                         if(rawDate && inTime !== undefined && outTime !== undefined) {
-                            // Extracting day from YYYY-MM-DD
-                            let dayMatch = String(rawDate).match(/\d{4}-\d{2}-(\d{2})/);
-                            let day = dayMatch ? parseInt(dayMatch[1]) : null;
+                            let dayStr = String(rawDate).trim();
+                            // YYYY-MM-DD හෝ DD/MM/YYYY ආකාරයෙන් තිබේ නම් දිනය ලබා ගනී
+                            let dayMatch = dayStr.match(/(\d{4}-\d{2}-(\d{2}))|(\d{1,2}\/\d{1,2}\/(\d{4}))/);
+                            
+                            let day = null;
+                            if (dayMatch) {
+                                // YYYY-MM-DD නම් 2 වෙනි group එක, නැතහොත් slash format එකෙන් සොයයි
+                                day = dayMatch[2] ? parseInt(dayMatch[2]) : parseInt(dayStr.split('/')[1] || dayStr.split('/')[0]);
+                            }
 
-                            if (day) {
+                            if (day && day >= 1 && day <= 31) {
                                 currentData[day] = { 
                                     in: formatTime(inTime), 
                                     out: formatTime(outTime) 
                                 };
+                                successCount++;
                             }
                         }
                     });
 
-                    await setDoc(docRef, currentData);
-                    alert("Excel දත්ත සාර්ථකව පූරණය කළා!");
-                    renderSheet();
+                    if(successCount > 0) {
+                        await setDoc(docRef, currentData);
+                        alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ${monthId} මාසයට ඇතුළත් කළා.`);
+                        renderSheet();
+                    } else {
+                        alert("ගැලපෙන දත්ත හමු වුනේ නැත. Excel ගොනුවේ Column Headers (Date, Check In, Check Out) නිවැරදිදැයි පරීක්ෂා කරන්න.");
+                    }
                 };
                 reader.readAsArrayBuffer(file);
             };
@@ -103,7 +122,7 @@
             }
             if (typeof val === 'string' && val.includes(':')) {
                 let parts = val.split(':');
-                return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+                return `${parts[0].trim().padStart(2, '0')}:${parts[1].trim().padStart(2, '0')}`;
             }
             return val;
         }
@@ -133,7 +152,7 @@
             return (integerPart + roundedDecimal).toFixed(1);
         }
 
-        // --- 3. CORE APP FUNCTIONS ---
+        // --- 3. UI & FIRESTORE FUNCTIONS ---
         async function loadHolidays() {
             const user = auth.currentUser;
             const q = query(collection(db, "users", user.uid, "holidays"));
@@ -160,11 +179,11 @@
         function renderHolidayList() {
             const list = document.getElementById('holidayList');
             list.innerHTML = userHolidays.map(date => `
-                <div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl mb-2 border">
+                <div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl mb-2 border border-slate-200">
                     <span class="font-bold text-slate-700">${date}</span>
-                    <button onclick="removeHoliday('${date}')" class="text-red-500 text-[10px] font-black">REMOVE</button>
+                    <button onclick="removeHoliday('${date}')" class="text-red-500 text-[10px] font-black uppercase">Remove</button>
                 </div>
-            `).join('');
+            `).join('') || `<p class="text-slate-400 text-xs text-center py-4">Holidays List Empty</p>`;
         }
 
         async function renderSheet() {
@@ -175,6 +194,9 @@
             const container = document.getElementById('sheetContainer');
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const monthId = `${year}-${month + 1}`;
+            
+            container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs'>දත්ත පූරණය වෙමින්...</div>";
+            
             const docSnap = await getDoc(doc(db, "users", user.uid, "months", monthId));
             const savedData = docSnap.exists() ? docSnap.data() : {};
 
@@ -195,11 +217,11 @@
                 row.innerHTML = `
                     <div class="w-10 text-center">
                         <span class="block text-[8px] font-bold text-slate-400 uppercase">${dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                        <span class="text-lg font-black text-slate-700">${d}</span>
+                        <span class="text-lg font-black text-slate-700 leading-none">${d}</span>
                     </div>
                     <div class="flex-1 grid grid-cols-2 gap-2">
-                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400">
-                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400">
+                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400 transition">
+                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400 transition">
                     </div>
                     <div class="w-12 text-right font-black text-blue-600 text-xs">${hrs}h</div>
                 `;
@@ -227,65 +249,76 @@
             document.getElementById('tabHolidays').className = tab === 'holidays' ? 'flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase' : 'flex-1 py-4 text-slate-400 font-bold text-xs uppercase';
         };
 
-        window.handleLogin = () => signInWithEmailAndPassword(auth, document.getElementById('email').value, document.getElementById('pass').value).catch(err => alert(err.message));
+        window.handleLogin = () => signInWithEmailAndPassword(auth, document.getElementById('email').value, document.getElementById('pass').value).catch(err => alert("Login Failed: " + err.message));
         window.logout = () => signOut(auth);
         window.renderSheet = renderSheet;
 
     </script>
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-900">
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
 
+    <!-- Login -->
     <div id="authScreen" class="max-w-md mx-auto pt-24 px-6">
-        <div class="bg-white p-10 rounded-[3rem] shadow-xl text-center">
-            <h1 class="text-3xl font-black mb-8">Secure Cloud</h1>
-            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border outline-none">
-            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border outline-none">
-            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-lg">LOGIN</button>
+        <div class="bg-white p-10 rounded-[3rem] shadow-2xl text-center border border-slate-100">
+            <div class="w-16 h-16 bg-blue-600 rounded-2xl mx-auto mb-6 flex items-center justify-center shadow-lg shadow-blue-100">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+            </div>
+            <h1 class="text-2xl font-black mb-8">Secure Cloud</h1>
+            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border border-slate-200 outline-none focus:border-blue-400 transition">
+            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border border-slate-200 outline-none focus:border-blue-400 transition">
+            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-100 active:scale-95 transition">LOGIN</button>
         </div>
     </div>
 
+    <!-- App -->
     <div id="appScreen" class="hidden max-w-lg mx-auto">
-        <div class="bg-white flex text-center border-b sticky top-0 z-20">
-            <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black">DAILY SHEET</button>
-            <button id="tabHolidays" onclick="switchTab('holidays')" class="flex-1 py-4 text-slate-400 font-bold">HOLIDAYS</button>
+        <div class="bg-white flex text-center border-b border-slate-200 sticky top-0 z-20">
+            <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase">Daily Sheet</button>
+            <button id="tabHolidays" onclick="switchTab('holidays')" class="flex-1 py-4 text-slate-400 font-bold text-xs uppercase">Holidays</button>
         </div>
 
         <div id="sheetView" class="p-4">
-            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6 flex justify-between items-center">
-                <div>
-                    <h2 id="totalHrs" class="text-4xl font-black">0.0 Hrs</h2>
-                    <div class="flex gap-2 mt-4">
-                        <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold outline-none">
-                            <option value="2026">2026</option><option value="2025">2025</option>
-                        </select>
-                        <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold outline-none">
-                            <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>
-                            <option value="3">APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>
-                            <option value="6">JULY</option><option value="7">AUGUST</option><option value="8">SEPTEMBER</option>
-                            <option value="9">OCTOBER</option><option value="10">NOVEMBER</option><option value="11">DECEMBER</option>
-                        </select>
+            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6 relative overflow-hidden">
+                <div class="relative z-10 flex justify-between items-center">
+                    <div>
+                        <p class="text-[10px] font-black uppercase opacity-60 mb-1">Monthly Total</p>
+                        <h2 id="totalHrs" class="text-4xl font-black">0.0 Hrs</h2>
+                        <div class="flex gap-2 mt-4">
+                            <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">
+                                <option value="2026">2026</option><option value="2025">2025</option>
+                            </select>
+                            <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">
+                                <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>
+                                <option value="3">APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>
+                                <option value="6">JULY</option><option value="7">AUGUST</option><option value="8">SEPTEMBER</option>
+                                <option value="9">OCTOBER</option><option value="10">NOVEMBER</option><option value="11">DECEMBER</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black shadow-sm active:scale-95 transition">IMPORT EXCEL</button>
+                        <button onclick="logout()" class="bg-white/20 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">LOGOUT</button>
                     </div>
                 </div>
-                <div class="flex flex-col gap-2">
-                    <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black">IMPORT EXCEL</button>
-                    <button onclick="logout()" class="bg-white/20 text-[10px] px-4 py-2 rounded-xl font-black">LOGOUT</button>
-                </div>
             </div>
-            <div id="sheetContainer" class="bg-white rounded-3xl shadow-sm border overflow-hidden"></div>
+            <div id="sheetContainer" class="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden"></div>
         </div>
 
         <div id="holidayView" class="hidden p-6">
-            <div class="bg-white p-6 rounded-[2rem] shadow-sm border mb-6">
-                <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border rounded-2xl mb-4 outline-none">
-                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl">ADD HOLIDAY</button>
+            <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 mb-6">
+                <h3 class="font-black mb-4">Add Holiday</h3>
+                <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none">
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-100 active:scale-95 transition">ADD TO LIST</button>
             </div>
             <div id="holidayList"></div>
         </div>
 
-        <div class="py-12 text-center text-[10px] text-slate-300 font-bold uppercase tracking-widest">
-            © All rights reserved.<br>
-            Developed by Udan A. Jayawardene<br>
-            <span class="text-blue-200">UDAN JAY™ DIGITAL SOLUTION</span>
+        <div class="py-12 text-center">
+            <p class="text-[10px] font-bold text-slate-300 uppercase tracking-widest leading-loose">
+                © All rights reserved.<br>
+                Developed by Udan A. Jayawardene<br>
+                <span class="text-blue-200">UDAN JAY™ DIGITAL SOLUTION</span>
+            </p>
         </div>
     </div>
 </body>
