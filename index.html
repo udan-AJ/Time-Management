@@ -54,8 +54,8 @@
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // Range 11 means it starts from Row 12
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" }); 
+                    // මාරු කළා: range 10 (එතකොට 11 වැනි පේළියේ සිට දත්ත ගනියි)
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 10, defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
@@ -70,7 +70,6 @@
                     let successCount = 0;
 
                     jsonData.forEach(row => {
-                        // Keys සොයා ගැනීම (Case-insensitive)
                         let dateKey = Object.keys(row).find(k => k.trim().toLowerCase() === "date");
                         let inKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check in");
                         let outKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check out");
@@ -81,15 +80,12 @@
 
                         if(rawDate) {
                             let day = null;
-                            
-                            // දිනය හඳුනා ගැනීම
                             if (rawDate instanceof Date) {
                                 day = rawDate.getDate();
                             } else {
                                 let dayStr = String(rawDate).trim();
                                 let parts = dayStr.split(/[-/]/);
                                 if (parts.length >= 3) {
-                                    // YYYY-MM-DD හෝ DD-MM-YYYY පරීක්ෂාව
                                     day = parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0]);
                                 } else {
                                     day = parseInt(dayStr);
@@ -120,17 +116,25 @@
         };
 
         function formatTime(val) {
-            if (!val) return "00:00";
+            if (!val || val === "00:00") return "00:00";
+            let h, m;
             if (val instanceof Date) {
-                return val.toTimeString().substring(0, 5);
-            }
-            if (typeof val === 'number') {
+                h = val.getHours();
+                m = val.getMinutes();
+            } else if (typeof val === 'number') {
                 let totalMinutes = Math.round(val * 24 * 60);
-                let hours = Math.floor(totalMinutes / 60);
-                let mins = totalMinutes % 60;
-                return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+                h = Math.floor(totalMinutes / 60);
+                m = totalMinutes % 60;
+            } else {
+                let parts = String(val).trim().split(':');
+                if(parts.length >= 2) {
+                    h = parseInt(parts[0]);
+                    m = parseInt(parts[1]);
+                } else {
+                    return "00:00";
+                }
             }
-            return String(val).trim().substring(0, 5);
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         }
 
         // --- 2. CALCULATION LOGIC ---
@@ -141,7 +145,7 @@
             let [h2, m2] = outTime.split(':').map(Number);
             
             let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
-            if (totalMinutes < 0) totalMinutes += 1440; // Over midnight
+            if (totalMinutes < 0) totalMinutes += 1440; 
             
             let rawHours = totalMinutes / 60;
             let integerPart = Math.floor(rawHours);
@@ -315,7 +319,7 @@
             <p class="text-[10px] font-bold text-slate-300 uppercase tracking-widest leading-loose">
                 © All rights reserved.<br>
                 Developed by Udan A. Jayawardene<br>
-                <span class="text-blue-500">UDAN JAY™ DIGITAL SOLUTION</span>
+                <span class="text-blue-500">UDAN JAY™ DIGITAL SOLUTIONS</span>
             </p>
         </div>
     </div>
