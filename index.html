@@ -39,7 +39,7 @@
             }
         });
 
-        // --- 1. IMPROVED EXCEL IMPORT LOGIC ---
+        // --- 1. FIXED EXCEL IMPORT LOGIC ---
         window.importExcel = () => {
             const fileInput = document.createElement('input');
             fileInput.type = 'file';
@@ -51,10 +51,12 @@
                 
                 reader.onload = async (event) => {
                     const data = new Uint8Array(event.target.result);
-                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                    // cellDates: true සහ dateNF වැදගත් වෙනවා හරියටම වෙලාව ගන්න
+                    const workbook = XLSX.read(data, { type: 'array', cellDates: true, dateNF: 'HH:mm' });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // Row 12 headers nisa range 11 damma. defval dala headers miss wenna dunne na.
+                    // Header එක තියෙන්නේ Row 12 (Index 11). 
+                    // range: "A12:Z500" වගේ දුන්නම 12 පේළියේ headers අරගෙන 13 පේළියේ ඉඳන් දත්ත ටික ගන්නවා.
                     const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
@@ -107,7 +109,7 @@
                         alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);
                         renderSheet();
                     } else {
-                        alert("දත්ත කියවීමට නොහැකි විය. Column Headers (Date, Check In, Check Out) පරීක්ෂා කරන්න.");
+                        alert("දත්ත කියවීමට නොහැකි විය. Headers (Date, Check In, Check Out) Row 12 හි තිබේදැයි බලන්න.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -115,21 +117,26 @@
             fileInput.click();
         };
 
+        // විනාඩියක් අඩුවෙන් එන ප්‍රශ්නයට විසඳුම මෙතන තියෙනවා (Math.round භාවිතා කර ඇත)
         function formatTime(val) {
             if (!val || val === "00:00" || val === "0:00") return "00:00";
             
             let h = 0, m = 0;
 
             if (val instanceof Date) {
+                // Date object එකකින් ගද්දී තත්පර නිසා විනාඩියක් වෙනස් වෙන්න පුළුවන්
+                // ඒ නිසා තත්පර 30ට වැඩි නම් විනාඩියක් එකතු කරලා round කරනවා
+                let seconds = val.getSeconds();
                 h = val.getHours();
                 m = val.getMinutes();
+                if (seconds >= 30) m++;
+                if (m >= 60) { m = 0; h++; }
             } else if (typeof val === 'number') {
-                // Time decimals rounding to avoid minute offset
+                // Excel numbers වලදී 0.5 වගේ එකතු කරලා තමයි හරියටම minute එක ගන්නේ
                 let totalMinutes = Math.round(val * 1440);
                 h = Math.floor(totalMinutes / 60);
                 m = totalMinutes % 60;
             } else {
-                // Handles strings like "7:57" or "07:57:00"
                 let parts = String(val).trim().split(':');
                 if (parts.length >= 2) {
                     h = parseInt(parts[0]);
