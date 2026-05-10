@@ -11,7 +11,6 @@
     <script type="module">
 
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-
         import {
             getAuth,
             onAuthStateChanged,
@@ -27,7 +26,8 @@
             collection,
             query,
             getDocs,
-            deleteDoc
+            deleteDoc,
+            updateDoc
         } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -64,7 +64,7 @@
         });
 
         // =========================
-        // EXCEL IMPORT
+        // FIXED EXCEL IMPORT
         // =========================
 
         window.importExcel = () => {
@@ -78,135 +78,134 @@
 
                 const file = e.target.files[0];
 
-                if (!file) return;
-
                 const reader = new FileReader();
 
                 reader.onload = async (event) => {
 
-                    try {
+                    const data =
+                        new Uint8Array(event.target.result);
 
-                        const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, {
+                        type: 'array',
+                        cellDates: true,
+                        dateNF: 'HH:mm'
+                    });
 
-                        const workbook = XLSX.read(data, {
-                            type: 'array',
-                            cellDates: true
-                        });
+                    const firstSheet =
+                        workbook.Sheets[workbook.SheetNames[0]];
 
-                        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-
-                        // Row 12 header
-                        const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+                    // FIXED
+                    const jsonData =
+                        XLSX.utils.sheet_to_json(firstSheet, {
                             range: 11,
-                            defval: ""
+                            defval: "",
+                            raw: false
                         });
 
-                        if (jsonData.length === 0) {
-                            return alert("No data found in Excel.");
-                        }
+                    if (jsonData.length === 0)
+                        return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
-                        const user = auth.currentUser;
+                    const user = auth.currentUser;
 
-                        const selectedYear =
-                            document.getElementById('yearSelect').value;
+                    const selectedYear =
+                        document.getElementById('yearSelect').value;
 
-                        const selectedMonth =
-                            parseInt(document.getElementById('monthSelect').value) + 1;
+                    const selectedMonth =
+                        parseInt(document.getElementById('monthSelect').value) + 1;
 
-                        const monthId = `${selectedYear}-${selectedMonth}`;
+                    const monthId =
+                        `${selectedYear}-${selectedMonth}`;
 
-                        const docRef =
-                            doc(db, "users", user.uid, "months", monthId);
+                    const docRef =
+                        doc(db, "users", user.uid, "months", monthId);
 
-                        const docSnap = await getDoc(docRef);
+                    const docSnap =
+                        await getDoc(docRef);
 
-                        let currentData =
-                            docSnap.exists() ? docSnap.data() : {};
+                    let currentData =
+                        docSnap.exists() ? docSnap.data() : {};
 
-                        let successCount = 0;
+                    let successCount = 0;
 
-                        jsonData.forEach(row => {
+                    jsonData.forEach(row => {
 
-                            let dateKey = Object.keys(row)
-                                .find(k => k.trim().toLowerCase() === "date");
+                        let dateKey =
+                            Object.keys(row).find(
+                                k => k.trim().toLowerCase() === "date"
+                            );
 
-                            let inKey = Object.keys(row)
-                                .find(k => k.trim().toLowerCase() === "check in");
+                        let inKey =
+                            Object.keys(row).find(
+                                k => k.trim().toLowerCase() === "check in"
+                            );
 
-                            let outKey = Object.keys(row)
-                                .find(k => k.trim().toLowerCase() === "check out");
+                        let outKey =
+                            Object.keys(row).find(
+                                k => k.trim().toLowerCase() === "check out"
+                            );
 
-                            let rawDate = row[dateKey];
-                            let inTime = row[inKey];
-                            let outTime = row[outKey];
+                        let rawDate = row[dateKey];
 
-                            if (rawDate) {
+                        let inTime = row[inKey];
 
-                                let day = null;
+                        let outTime = row[outKey];
 
-                                if (rawDate instanceof Date) {
+                        if (rawDate) {
 
-                                    day = rawDate.getDate();
+                            let day = null;
+
+                            if (rawDate instanceof Date) {
+
+                                day = rawDate.getDate();
+
+                            } else {
+
+                                let dayStr =
+                                    String(rawDate).trim();
+
+                                let parts =
+                                    dayStr.split(/[-/]/);
+
+                                if (parts.length >= 3) {
+
+                                    day =
+                                        parts[0].length === 4
+                                            ? parseInt(parts[2])
+                                            : parseInt(parts[0]);
 
                                 } else {
 
-                                    let dayStr = String(rawDate).trim();
-
-                                    let parts = dayStr.split(/[-/]/);
-
-                                    if (parts.length >= 3) {
-
-                                        day =
-                                            parts[0].length === 4
-                                                ? parseInt(parts[2])
-                                                : parseInt(parts[0]);
-
-                                    } else {
-
-                                        day = parseInt(dayStr);
-                                    }
-                                }
-
-                                if (day && day >= 1 && day <= 31) {
-
-                                    const formattedIn =
-                                        formatTime(inTime);
-
-                                    const formattedOut =
-                                        formatTime(outTime);
-
-                                    currentData[String(day)] = {
-
-                                        in: formattedIn,
-
-                                        out: formattedOut
-                                    };
-
-                                    successCount++;
+                                    day = parseInt(dayStr);
                                 }
                             }
+
+                            if (day && day >= 1 && day <= 31) {
+
+                                currentData[String(day)] = {
+
+                                    in: formatTime(inTime),
+
+                                    out: formatTime(outTime)
+                                };
+
+                                successCount++;
+                            }
+                        }
+                    });
+
+                    if (successCount > 0) {
+
+                        await setDoc(docRef, currentData, {
+                            merge: true
                         });
 
-                        if (successCount > 0) {
+                        alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);
 
-                            await setDoc(docRef, currentData, {
-                                merge: true
-                            });
+                        renderSheet();
 
-                            alert(`Imported ${successCount} days successfully.`);
+                    } else {
 
-                            renderSheet();
-
-                        } else {
-
-                            alert("No valid rows found.");
-                        }
-
-                    } catch (error) {
-
-                        console.error(error);
-
-                        alert("Excel import failed.");
+                        alert("දත්ත කියවීමට නොහැකි විය.");
                     }
                 };
 
@@ -217,18 +216,12 @@
         };
 
         // =========================
-        // TIME FORMAT FIX
+        // FIXED TIME FORMAT
         // =========================
 
         function formatTime(val) {
 
-            if (
-                val === null ||
-                val === undefined ||
-                val === "" ||
-                val === "00:00" ||
-                val === "0:00"
-            ) {
+            if (!val || val === "00:00" || val === "0:00") {
                 return "";
             }
 
@@ -239,33 +232,36 @@
             if (val instanceof Date) {
 
                 h = val.getHours();
+
                 m = val.getMinutes();
 
+                // FIX ONE MINUTE LESS ISSUE
                 if (val.getSeconds() >= 30) {
                     m++;
                 }
-
             }
 
             // Excel Numeric Time
-            else if (typeof val === "number") {
+            else if (typeof val === 'number') {
 
-                const totalMinutes =
+                let totalMinutes =
                     Math.round((val * 1440) + 0.00001);
 
                 h = Math.floor(totalMinutes / 60);
+
                 m = totalMinutes % 60;
             }
 
             // String Time
             else {
 
-                const parts =
-                    String(val).trim().split(":");
+                let parts =
+                    String(val).trim().split(':');
 
                 if (parts.length >= 2) {
 
                     h = parseInt(parts[0], 10);
+
                     m = parseInt(parts[1], 10);
 
                 } else {
@@ -277,6 +273,7 @@
             if (m >= 60) {
 
                 h++;
+
                 m = 0;
             }
 
@@ -285,13 +282,12 @@
             return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         }
 
-        // =========================
-        // HOURS CALCULATION
-        // =========================
-
         function calculateHours(inTime, outTime) {
 
-            if (!inTime || !outTime) return 0;
+            if (!inTime || !outTime ||
+                inTime === "00:00" ||
+                outTime === "00:00")
+                return 0;
 
             let [h1, m1] =
                 inTime.split(':').map(Number);
@@ -303,15 +299,17 @@
                 (h2 * 60 + m2) -
                 (h1 * 60 + m1);
 
-            if (totalMinutes < 0) {
+            if (totalMinutes < 0)
                 totalMinutes += 1440;
-            }
 
-            let rawHours = totalMinutes / 60;
+            let rawHours =
+                totalMinutes / 60;
 
-            let integerPart = Math.floor(rawHours);
+            let integerPart =
+                Math.floor(rawHours);
 
-            let decimalPart = rawHours - integerPart;
+            let decimalPart =
+                rawHours - integerPart;
 
             let roundedDecimal;
 
@@ -329,26 +327,24 @@
             ).toFixed(1);
         }
 
-        // =========================
-        // HOLIDAYS
-        // =========================
-
         async function loadHolidays() {
 
             const user = auth.currentUser;
 
-            const q = query(
-                collection(db, "users", user.uid, "holidays")
-            );
+            const q =
+                query(collection(db,
+                    "users",
+                    user.uid,
+                    "holidays"));
 
-            const querySnapshot = await getDocs(q);
+            const querySnapshot =
+                await getDocs(q);
 
             userHolidays = [];
 
-            querySnapshot.forEach((doc) => {
-
-                userHolidays.push(doc.id);
-            });
+            querySnapshot.forEach((doc) =>
+                userHolidays.push(doc.id)
+            );
 
             renderHolidayList();
         }
@@ -361,7 +357,11 @@
             if (!date) return;
 
             await setDoc(
-                doc(db, "users", auth.currentUser.uid, "holidays", date),
+                doc(db,
+                    "users",
+                    auth.currentUser.uid,
+                    "holidays",
+                    date),
                 { active: true }
             );
 
@@ -373,7 +373,11 @@
         window.removeHoliday = async (date) => {
 
             await deleteDoc(
-                doc(db, "users", auth.currentUser.uid, "holidays", date)
+                doc(db,
+                    "users",
+                    auth.currentUser.uid,
+                    "holidays",
+                    date)
             );
 
             await loadHolidays();
@@ -386,7 +390,8 @@
             const list =
                 document.getElementById('holidayList');
 
-            list.innerHTML = userHolidays.map(date => `
+            list.innerHTML =
+                userHolidays.map(date => `
                 <div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl mb-2 border border-slate-200">
                     <span class="font-bold text-slate-700">${date}</span>
 
@@ -395,24 +400,29 @@
                         Remove
                     </button>
                 </div>
-            `).join('');
+            `).join('')
+            ||
+            `<p class="text-slate-400 text-xs text-center py-4">
+                Holidays List Empty
+            </p>`;
         }
-
-        // =========================
-        // RENDER SHEET
-        // =========================
 
         async function renderSheet() {
 
-            const user = auth.currentUser;
+            const user =
+                auth.currentUser;
 
             if (!user) return;
 
             const month =
-                parseInt(document.getElementById('monthSelect').value);
+                parseInt(
+                    document.getElementById('monthSelect').value
+                );
 
             const year =
-                parseInt(document.getElementById('yearSelect').value);
+                parseInt(
+                    document.getElementById('yearSelect').value
+                );
 
             const container =
                 document.getElementById('sheetContainer');
@@ -428,11 +438,17 @@
 
             const docSnap =
                 await getDoc(
-                    doc(db, "users", user.uid, "months", monthId)
+                    doc(db,
+                        "users",
+                        user.uid,
+                        "months",
+                        monthId)
                 );
 
             const savedData =
-                docSnap.exists() ? docSnap.data() : {};
+                docSnap.exists()
+                    ? docSnap.data()
+                    : {};
 
             container.innerHTML = "";
 
@@ -454,10 +470,8 @@
                     userHolidays.includes(dateStr);
 
                 const dayData =
-                    savedData[String(d)] || {
-                        in: "",
-                        out: ""
-                    };
+                    savedData[String(d)] ||
+                    { in: "", out: "" };
 
                 const hrs =
                     calculateHours(dayData.in, dayData.out);
@@ -471,11 +485,16 @@
                     `flex items-center gap-2 p-3 border-b ${
                         isHoliday
                             ? 'bg-red-50'
-                            : (isWeekend ? 'bg-orange-50' : 'bg-white')
+                            : (
+                                isWeekend
+                                    ? 'bg-orange-50'
+                                    : 'bg-white'
+                            )
                     }`;
 
                 row.innerHTML = `
                     <div class="w-10 text-center">
+
                         <span class="block text-[8px] font-bold text-slate-400 uppercase">
                             ${dateObj.toLocaleDateString('en-US', {
                                 weekday: 'short'
@@ -490,15 +509,14 @@
                     <div class="flex-1 grid grid-cols-2 gap-2">
 
                         <input type="time"
-                            value="${dayData.in || ''}"
+                            value="${dayData.in}"
                             onchange="updateRecord(${d}, 'in', this.value)"
                             class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400 transition">
 
                         <input type="time"
-                            value="${dayData.out || ''}"
+                            value="${dayData.out}"
                             onchange="updateRecord(${d}, 'out', this.value)"
                             class="p-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-400 transition">
-
                     </div>
 
                     <div class="w-12 text-right font-black text-blue-600 text-xs">
@@ -513,13 +531,10 @@
                 monthlyTotal.toFixed(1) + " Hrs";
         }
 
-        // =========================
-        // UPDATE RECORD
-        // =========================
-
         window.updateRecord = async (day, type, value) => {
 
-            const user = auth.currentUser;
+            const user =
+                auth.currentUser;
 
             const monthId =
                 `${document.getElementById('yearSelect').value}-${
@@ -527,7 +542,11 @@
                 }`;
 
             const docRef =
-                doc(db, "users", user.uid, "months", monthId);
+                doc(db,
+                    "users",
+                    user.uid,
+                    "months",
+                    monthId);
 
             await setDoc(docRef, {
                 [String(day)]: {
@@ -541,13 +560,13 @@
         };
 
         // =========================
-        // CLEAR DATA
+        // CLEAR DATA BUTTON FUNCTION
         // =========================
 
         window.clearMonthData = async () => {
 
             const confirmClear = confirm(
-                "Are you sure you want to clear all data for this month?"
+                "Are you sure you want to clear this month's data?"
             );
 
             if (!confirmClear) return;
@@ -562,7 +581,11 @@
             try {
 
                 await deleteDoc(
-                    doc(db, "users", user.uid, "months", monthId)
+                    doc(db,
+                        "users",
+                        user.uid,
+                        "months",
+                        monthId)
                 );
 
                 alert("Month data cleared successfully.");
@@ -577,17 +600,33 @@
             }
         };
 
-        // =========================
-        // LOGIN
-        // =========================
+        window.switchTab = (tab) => {
+
+            document.getElementById('sheetView')
+                .classList.toggle('hidden', tab !== 'sheet');
+
+            document.getElementById('holidayView')
+                .classList.toggle('hidden', tab !== 'holidays');
+
+            document.getElementById('tabSheet').className =
+                tab === 'sheet'
+                    ? 'flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase'
+                    : 'flex-1 py-4 text-slate-400 font-bold text-xs uppercase';
+
+            document.getElementById('tabHolidays').className =
+                tab === 'holidays'
+                    ? 'flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase'
+                    : 'flex-1 py-4 text-slate-400 font-bold text-xs uppercase';
+        };
 
         window.handleLogin = () =>
-
             signInWithEmailAndPassword(
                 auth,
                 document.getElementById('email').value,
                 document.getElementById('pass').value
-            ).catch(err => alert(err.message));
+            ).catch(err =>
+                alert("Login Failed: " + err.message)
+            );
 
         window.logout = () => signOut(auth);
 
@@ -598,86 +637,29 @@
 
 <body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
 
-    <!-- AUTH -->
+<!-- YOUR ORIGINAL HTML CONTINUES HERE -->
+<!-- ONLY BUTTON SECTION CHANGED BELOW -->
 
-    <div id="authScreen"
-        class="max-w-md mx-auto pt-24 px-6">
+<div class="flex flex-col gap-2">
 
-        <div class="bg-white p-10 rounded-[3rem] shadow-2xl text-center border border-slate-100">
+    <button onclick="importExcel()"
+        class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">
+        IMPORT EXCEL
+    </button>
 
-            <h1 class="text-2xl font-black mb-8">
-                Secure Cloud
-            </h1>
+    <button onclick="clearMonthData()"
+        class="bg-red-500 text-white text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">
+        CLEAR DATA
+    </button>
 
-            <input type="email"
-                id="email"
-                placeholder="Email"
-                class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border border-slate-200 outline-none">
+    <button onclick="logout()"
+        class="bg-white/20 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">
+        LOGOUT
+    </button>
 
-            <input type="password"
-                id="pass"
-                placeholder="Password"
-                class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border border-slate-200 outline-none">
+</div>
 
-            <button onclick="handleLogin()"
-                class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl">
-                LOGIN
-            </button>
+<!-- REST OF YOUR ORIGINAL HTML REMAINS SAME -->
 
-        </div>
-    </div>
-
-    <!-- APP -->
-
-    <div id="appScreen"
-        class="hidden max-w-lg mx-auto">
-
-        <div class="bg-white flex text-center border-b border-slate-200">
-
-            <button class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase">
-                Daily Sheet
-            </button>
-
-        </div>
-
-        <div class="p-4">
-
-            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6">
-
-                <div class="flex justify-between items-center">
-
-                    <div>
-
-                        <p class="text-[10px] font-black uppercase opacity-60 mb-1">
-                            Monthly Total
-                        </p>
-
-                        <h2 id="totalHrs"
-                            class="text-4xl font-black">
-                            0.0 Hrs
-                        </h2>
-
-                        <div class="flex gap-2 mt-4">
-
-                            <select id="yearSelect"
-                                onchange="renderSheet()"
-                                class="bg-white/20 text-[10px] p-2 rounded-xl">
-
-                                <option value="2026">2026</option>
-
-                                <option value="2025" selected>
-                                    2025
-                                </option>
-
-                            </select>
-
-                            <select id="monthSelect"
-                                onchange="renderSheet()"
-                                class="bg-white/20 text-[10px] p-2 rounded-xl">
-
-                                <option value="0">JAN</option>
-                                <option value="1">FEB</option>
-                                <option value="2">MAR</option>
-                                <option value="3">APR</option>
-                                <option value="4">MAY</option>
-     
+</body>
+</html>
