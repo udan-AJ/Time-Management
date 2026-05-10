@@ -10,7 +10,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, query, getDocs, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBT3joJWX-dsz4C9-wKsffepSpXypn1n9E",
@@ -39,7 +39,7 @@
             }
         });
 
-        // --- 1. IMPROVED EXCEL IMPORT LOGIC ---
+        // --- 1. FIXED EXCEL IMPORT LOGIC ---
         window.importExcel = () => {
             const fileInput = document.createElement('input');
             fileInput.type = 'file';
@@ -54,8 +54,8 @@
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // Range 11 means it starts from Row 12
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" }); 
+                    // range: 10 means Row 11 from Excel (Start reading from data headers)
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 10, defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
@@ -70,7 +70,6 @@
                     let successCount = 0;
 
                     jsonData.forEach(row => {
-                        // Keys සොයා ගැනීම (Case-insensitive)
                         let dateKey = Object.keys(row).find(k => k.trim().toLowerCase() === "date");
                         let inKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check in");
                         let outKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check out");
@@ -81,15 +80,12 @@
 
                         if(rawDate) {
                             let day = null;
-                            
-                            // දිනය හඳුනා ගැනීම
                             if (rawDate instanceof Date) {
                                 day = rawDate.getDate();
                             } else {
                                 let dayStr = String(rawDate).trim();
                                 let parts = dayStr.split(/[-/]/);
                                 if (parts.length >= 3) {
-                                    // YYYY-MM-DD හෝ DD-MM-YYYY පරීක්ෂාව
                                     day = parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0]);
                                 } else {
                                     day = parseInt(dayStr);
@@ -111,7 +107,7 @@
                         alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);
                         renderSheet();
                     } else {
-                        alert("දත්ත කියවීමට නොහැකි විය. Column Headers (Date, Check In, Check Out) පරීක්ෂා කරන්න.");
+                        alert("Header Names (Date, Check In, Check Out) පරීක්ෂා කරන්න.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -119,13 +115,15 @@
             fileInput.click();
         };
 
+        // FIXED TIME FORMATTING (Adds 0.5 min buffer to prevent rounding down)
         function formatTime(val) {
-            if (!val) return "00:00";
+            if (!val || val === "") return "00:00";
             if (val instanceof Date) {
                 return val.toTimeString().substring(0, 5);
             }
             if (typeof val === 'number') {
-                let totalMinutes = Math.round(val * 24 * 60);
+                // Add 0.5 to fix the 1-minute-less issue caused by float precision
+                let totalMinutes = Math.floor(val * 24 * 60 + 0.5);
                 let hours = Math.floor(totalMinutes / 60);
                 let mins = totalMinutes % 60;
                 return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
@@ -133,15 +131,12 @@
             return String(val).trim().substring(0, 5);
         }
 
-        // --- 2. CALCULATION LOGIC ---
         function calculateHours(inTime, outTime) {
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") return 0;
-            
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
-            
             let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
-            if (totalMinutes < 0) totalMinutes += 1440; // Over midnight
+            if (totalMinutes < 0) totalMinutes += 1440;
             
             let rawHours = totalMinutes / 60;
             let integerPart = Math.floor(rawHours);
@@ -155,7 +150,6 @@
             return (integerPart + roundedDecimal).toFixed(1);
         }
 
-        // --- 3. UI FUNCTIONS ---
         async function loadHolidays() {
             const user = auth.currentUser;
             const q = query(collection(db, "users", user.uid, "holidays"));
@@ -198,7 +192,7 @@
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const monthId = `${year}-${month + 1}`;
             
-            container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs'>Loading...</div>";
+            container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs tracking-widest'>SYNCING...</div>";
             
             const docSnap = await getDoc(doc(db, "users", user.uid, "months", monthId));
             const savedData = docSnap.exists() ? docSnap.data() : {};
@@ -237,8 +231,6 @@
             const user = auth.currentUser;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
             const docRef = doc(db, "users", user.uid, "months", monthId);
-            const updateObj = {};
-            updateObj[`${day}.${type}`] = value;
             await setDoc(docRef, { [String(day)]: { [type]: value } }, { merge: true });
             renderSheet();
         };
@@ -257,65 +249,67 @@
     </script>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+
     <div id="authScreen" class="max-w-md mx-auto pt-24 px-6">
-        <div class="bg-white p-10 rounded-[3rem] shadow-2xl text-center border border-slate-100">
-            <div class="w-16 h-16 bg-blue-600 rounded-2xl mx-auto mb-6 flex items-center justify-center shadow-lg shadow-blue-100">
-                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+        <div class="bg-white p-10 rounded-[3.5rem] shadow-2xl text-center border border-slate-100">
+            <div class="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-8 flex items-center justify-center shadow-2xl shadow-blue-200">
+                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
             </div>
-            <h1 class="text-2xl font-black mb-8">Secure Cloud</h1>
-            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border border-slate-200 outline-none">
-            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border border-slate-200 outline-none">
-            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl active:scale-95 transition">LOGIN</button>
+            <h1 class="text-3xl font-black mb-8 tracking-tight">Cloud Sync</h1>
+            <input type="email" id="email" placeholder="Email Address" class="w-full p-5 mb-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:border-blue-400 transition">
+            <input type="password" id="pass" placeholder="Password" class="w-full p-5 mb-10 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:border-blue-400 transition">
+            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-100 active:scale-95 transition">SIGN IN</button>
         </div>
     </div>
 
     <div id="appScreen" class="hidden max-w-lg mx-auto">
         <div class="bg-white flex text-center border-b border-slate-200 sticky top-0 z-20">
-            <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase">Daily Sheet</button>
+            <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase">Daily Log</button>
             <button id="tabHolidays" onclick="switchTab('holidays')" class="flex-1 py-4 text-slate-400 font-bold text-xs uppercase">Holidays</button>
         </div>
 
         <div id="sheetView" class="p-4">
-            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6">
-                <div class="flex justify-between items-center">
+            <div class="bg-blue-600 p-8 rounded-[3rem] text-white shadow-2xl mb-8 relative overflow-hidden">
+                <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+                <div class="relative z-10 flex justify-between items-center">
                     <div>
-                        <p class="text-[10px] font-black uppercase opacity-60 mb-1">Monthly Total</p>
-                        <h2 id="totalHrs" class="text-4xl font-black">0.0 Hrs</h2>
-                        <div class="flex gap-2 mt-4">
+                        <p class="text-[10px] font-black uppercase opacity-60 mb-2 tracking-widest">Calculated Total</p>
+                        <h2 id="totalHrs" class="text-5xl font-black">0.0 Hrs</h2>
+                        <div class="flex gap-2 mt-6">
                             <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">
                                 <option value="2026">2026</option><option value="2025" selected>2025</option>
                             </select>
                             <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">
                                 <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>
-                                <option value="3">APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>
+                                <option value="3" selected>APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>
                                 <option value="6">JULY</option><option value="7">AUGUST</option><option value="8">SEPTEMBER</option>
                                 <option value="9">OCTOBER</option><option value="10">NOVEMBER</option><option value="11">DECEMBER</option>
                             </select>
                         </div>
                     </div>
-                    <div class="flex flex-col gap-2">
-                        <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">IMPORT EXCEL</button>
-                        <button onclick="logout()" class="bg-white/20 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">LOGOUT</button>
+                    <div class="flex flex-col gap-3">
+                        <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-5 py-3 rounded-2xl font-black shadow-xl active:scale-95 transition">IMPORT DATA</button>
+                        <button onclick="logout()" class="bg-white/10 text-[10px] px-5 py-3 rounded-2xl font-black active:scale-95 transition border border-white/10">LOGOUT</button>
                     </div>
                 </div>
             </div>
-            <div id="sheetContainer" class="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden"></div>
+            <div id="sheetContainer" class="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden"></div>
         </div>
 
         <div id="holidayView" class="hidden p-6">
-            <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 mb-6">
-                <h3 class="font-black mb-4">Add Holiday</h3>
-                <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none">
-                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition">ADD TO LIST</button>
+            <div class="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 mb-8">
+                <h3 class="font-black mb-5 text-xl">Manage Holidays</h3>
+                <input type="date" id="holidayInput" class="w-full p-5 bg-slate-50 border border-slate-100 rounded-2xl mb-5 outline-none focus:border-blue-400">
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-100 active:scale-95 transition uppercase text-xs">Register Holiday</button>
             </div>
             <div id="holidayList"></div>
         </div>
 
-        <div class="py-12 text-center">
-            <p class="text-[10px] font-bold text-slate-300 uppercase tracking-widest leading-loose">
-                © All rights reserved.<br>
+        <div class="py-16 text-center">
+            <p class="text-[10px] font-bold text-slate-300 uppercase tracking-[0.3em] leading-loose">
+                Cloud Powered OT Tracker<br>
                 Developed by Udan A. Jayawardene<br>
-                <span class="text-blue-500">UDAN JAY™ DIGITAL SOLUTION</span>
+                <span class="text-blue-400 font-black">UDAN JAY™ DIGITAL SOLUTIONS</span>
             </p>
         </div>
     </div>
