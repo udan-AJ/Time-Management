@@ -54,8 +54,8 @@
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // මාරු කළා: range 10 (එතකොට 11 වැනි පේළියේ සිට දත්ත ගනියි)
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 10, defval: "" }); 
+                    // Range 0 set kala headers saha first row ekama ahuwenna
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 0, defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
@@ -103,7 +103,7 @@
                     });
 
                     if(successCount > 0) {
-                        await setDoc(docRef, currentData);
+                        await setDoc(docRef, currentData, { merge: true });
                         alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);
                         renderSheet();
                     } else {
@@ -319,7 +319,7 @@
             <p class="text-[10px] font-bold text-slate-300 uppercase tracking-widest leading-loose">
                 © All rights reserved.<br>
                 Developed by Udan A. Jayawardene<br>
-                <span class="text-blue-500">UDAN JAY™ DIGITAL SOLUTIONS</span>
+                <span class="text-blue-500">UDAN JAY™ DIGITAL SOLUTION</span>
             </p>
         </div>
     </div>
