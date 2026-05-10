@@ -10,7 +10,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, query, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, getDocs, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBT3joJWX-dsz4C9-wKsffepSpXypn1n9E",
@@ -51,11 +51,11 @@
                 
                 reader.onload = async (event) => {
                     const data = new Uint8Array(event.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
+                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // Row 12 සිට කියවීම ආරම්භ කරයි (Index 11)
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11 }); 
+                    // Range 11 means it starts from Row 12
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
@@ -70,7 +70,7 @@
                     let successCount = 0;
 
                     jsonData.forEach(row => {
-                        // Column නම් වල හිස්තැන් තිබුණත් ඒවා හඳුනා ගැනීමට (Case-insensitive check)
+                        // Keys සොයා ගැනීම (Case-insensitive)
                         let dateKey = Object.keys(row).find(k => k.trim().toLowerCase() === "date");
                         let inKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check in");
                         let outKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check out");
@@ -79,19 +79,25 @@
                         let inTime = row[inKey];
                         let outTime = row[outKey];
 
-                        if(rawDate && inTime !== undefined && outTime !== undefined) {
-                            let dayStr = String(rawDate).trim();
-                            // YYYY-MM-DD හෝ DD/MM/YYYY ආකාරයෙන් තිබේ නම් දිනය ලබා ගනී
-                            let dayMatch = dayStr.match(/(\d{4}-\d{2}-(\d{2}))|(\d{1,2}\/\d{1,2}\/(\d{4}))/);
-                            
+                        if(rawDate) {
                             let day = null;
-                            if (dayMatch) {
-                                // YYYY-MM-DD නම් 2 වෙනි group එක, නැතහොත් slash format එකෙන් සොයයි
-                                day = dayMatch[2] ? parseInt(dayMatch[2]) : parseInt(dayStr.split('/')[1] || dayStr.split('/')[0]);
+                            
+                            // දිනය හඳුනා ගැනීම
+                            if (rawDate instanceof Date) {
+                                day = rawDate.getDate();
+                            } else {
+                                let dayStr = String(rawDate).trim();
+                                let parts = dayStr.split(/[-/]/);
+                                if (parts.length >= 3) {
+                                    // YYYY-MM-DD හෝ DD-MM-YYYY පරීක්ෂාව
+                                    day = parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0]);
+                                } else {
+                                    day = parseInt(dayStr);
+                                }
                             }
 
                             if (day && day >= 1 && day <= 31) {
-                                currentData[day] = { 
+                                currentData[String(day)] = { 
                                     in: formatTime(inTime), 
                                     out: formatTime(outTime) 
                                 };
@@ -102,10 +108,10 @@
 
                     if(successCount > 0) {
                         await setDoc(docRef, currentData);
-                        alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ${monthId} මාසයට ඇතුළත් කළා.`);
+                        alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);
                         renderSheet();
                     } else {
-                        alert("ගැලපෙන දත්ත හමු වුනේ නැත. Excel ගොනුවේ Column Headers (Date, Check In, Check Out) නිවැරදිදැයි පරීක්ෂා කරන්න.");
+                        alert("දත්ත කියවීමට නොහැකි විය. Column Headers (Date, Check In, Check Out) පරීක්ෂා කරන්න.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -114,45 +120,42 @@
         };
 
         function formatTime(val) {
+            if (!val) return "00:00";
+            if (val instanceof Date) {
+                return val.toTimeString().substring(0, 5);
+            }
             if (typeof val === 'number') {
-                const totalMinutes = Math.round(val * 24 * 60);
-                const hours = Math.floor(totalMinutes / 60);
-                const mins = totalMinutes % 60;
-                return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+                let totalMinutes = Math.round(val * 24 * 60);
+                let hours = Math.floor(totalMinutes / 60);
+                let mins = totalMinutes % 60;
+                return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
             }
-            if (typeof val === 'string' && val.includes(':')) {
-                let parts = val.split(':');
-                return `${parts[0].trim().padStart(2, '0')}:${parts[1].trim().padStart(2, '0')}`;
-            }
-            return val;
+            return String(val).trim().substring(0, 5);
         }
 
-        // --- 2. CALCULATION LOGIC (0.25 / 0.55 ROUNDING) ---
+        // --- 2. CALCULATION LOGIC ---
         function calculateHours(inTime, outTime) {
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") return 0;
             
-            let start = new Date(`2000-01-01T${inTime}`);
-            let end = new Date(`2000-01-01T${outTime}`);
+            let [h1, m1] = inTime.split(':').map(Number);
+            let [h2, m2] = outTime.split(':').map(Number);
             
-            if (end <= start) end = new Date(`2000-01-02T${outTime}`);
+            let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
+            if (totalMinutes < 0) totalMinutes += 1440; // Over midnight
             
-            let rawHours = (end - start) / (1000 * 60 * 60);
+            let rawHours = totalMinutes / 60;
             let integerPart = Math.floor(rawHours);
             let decimalPart = rawHours - integerPart;
             
             let roundedDecimal;
-            if (decimalPart < 0.25) {
-                roundedDecimal = 0.0;
-            } else if (decimalPart < 0.55) {
-                roundedDecimal = 0.5;
-            } else {
-                roundedDecimal = 1.0;
-            }
+            if (decimalPart < 0.25) roundedDecimal = 0.0;
+            else if (decimalPart < 0.55) roundedDecimal = 0.5;
+            else roundedDecimal = 1.0;
 
             return (integerPart + roundedDecimal).toFixed(1);
         }
 
-        // --- 3. UI & FIRESTORE FUNCTIONS ---
+        // --- 3. UI FUNCTIONS ---
         async function loadHolidays() {
             const user = auth.currentUser;
             const q = query(collection(db, "users", user.uid, "holidays"));
@@ -195,7 +198,7 @@
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const monthId = `${year}-${month + 1}`;
             
-            container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs'>දත්ත පූරණය වෙමින්...</div>";
+            container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs'>Loading...</div>";
             
             const docSnap = await getDoc(doc(db, "users", user.uid, "months", monthId));
             const savedData = docSnap.exists() ? docSnap.data() : {};
@@ -208,7 +211,7 @@
                 const dateStr = dateObj.toLocaleDateString('en-CA');
                 const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
                 const isHoliday = userHolidays.includes(dateStr);
-                const dayData = savedData[d] || { in: "", out: "" };
+                const dayData = savedData[String(d)] || { in: "", out: "" };
                 const hrs = calculateHours(dayData.in, dayData.out);
                 monthlyTotal += parseFloat(hrs);
 
@@ -234,11 +237,9 @@
             const user = auth.currentUser;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
             const docRef = doc(db, "users", user.uid, "months", monthId);
-            const docSnap = await getDoc(docRef);
-            let data = docSnap.exists() ? docSnap.data() : {};
-            if (!data[day]) data[day] = { in: "", out: "" };
-            data[day][type] = value;
-            await setDoc(docRef, data, { merge: true });
+            const updateObj = {};
+            updateObj[`${day}.${type}`] = value;
+            await setDoc(docRef, { [String(day)]: { [type]: value } }, { merge: true });
             renderSheet();
         };
 
@@ -256,21 +257,18 @@
     </script>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
-
-    <!-- Login -->
     <div id="authScreen" class="max-w-md mx-auto pt-24 px-6">
         <div class="bg-white p-10 rounded-[3rem] shadow-2xl text-center border border-slate-100">
             <div class="w-16 h-16 bg-blue-600 rounded-2xl mx-auto mb-6 flex items-center justify-center shadow-lg shadow-blue-100">
                 <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
             </div>
             <h1 class="text-2xl font-black mb-8">Secure Cloud</h1>
-            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border border-slate-200 outline-none focus:border-blue-400 transition">
-            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border border-slate-200 outline-none focus:border-blue-400 transition">
-            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-100 active:scale-95 transition">LOGIN</button>
+            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border border-slate-200 outline-none">
+            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border border-slate-200 outline-none">
+            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl active:scale-95 transition">LOGIN</button>
         </div>
     </div>
 
-    <!-- App -->
     <div id="appScreen" class="hidden max-w-lg mx-auto">
         <div class="bg-white flex text-center border-b border-slate-200 sticky top-0 z-20">
             <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase">Daily Sheet</button>
@@ -278,14 +276,14 @@
         </div>
 
         <div id="sheetView" class="p-4">
-            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6 relative overflow-hidden">
-                <div class="relative z-10 flex justify-between items-center">
+            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6">
+                <div class="flex justify-between items-center">
                     <div>
                         <p class="text-[10px] font-black uppercase opacity-60 mb-1">Monthly Total</p>
                         <h2 id="totalHrs" class="text-4xl font-black">0.0 Hrs</h2>
                         <div class="flex gap-2 mt-4">
                             <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">
-                                <option value="2026">2026</option><option value="2025">2025</option>
+                                <option value="2026">2026</option><option value="2025" selected>2025</option>
                             </select>
                             <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">
                                 <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>
@@ -296,7 +294,7 @@
                         </div>
                     </div>
                     <div class="flex flex-col gap-2">
-                        <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black shadow-sm active:scale-95 transition">IMPORT EXCEL</button>
+                        <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">IMPORT EXCEL</button>
                         <button onclick="logout()" class="bg-white/20 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">LOGOUT</button>
                     </div>
                 </div>
@@ -308,7 +306,7 @@
             <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 mb-6">
                 <h3 class="font-black mb-4">Add Holiday</h3>
                 <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none">
-                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-100 active:scale-95 transition">ADD TO LIST</button>
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition">ADD TO LIST</button>
             </div>
             <div id="holidayList"></div>
         </div>
@@ -317,7 +315,7 @@
             <p class="text-[10px] font-bold text-slate-300 uppercase tracking-widest leading-loose">
                 © All rights reserved.<br>
                 Developed by Udan A. Jayawardene<br>
-                <span class="text-blue-200">UDAN JAY™ DIGITAL SOLUTION</span>
+                <span class="text-blue-500">UDAN JAY™ DIGITAL SOLUTION</span>
             </p>
         </div>
     </div>
