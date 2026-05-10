@@ -54,8 +54,8 @@
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // Range 0 set kala headers saha first row ekama ahuwenna
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 0, defval: "" }); 
+                    // range 0 thibunama headers hoyaganna bari nam, defval dala row by row check karamu
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
@@ -70,18 +70,21 @@
                     let successCount = 0;
 
                     jsonData.forEach(row => {
-                        let dateKey = Object.keys(row).find(k => k.trim().toLowerCase() === "date");
-                        let inKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check in");
-                        let outKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check out");
+                        // Keys find logic (Case-insensitive)
+                        let dateKey = Object.keys(row).find(k => k.toString().trim().toLowerCase() === "date");
+                        let inKey = Object.keys(row).find(k => k.toString().trim().toLowerCase() === "check in");
+                        let outKey = Object.keys(row).find(k => k.toString().trim().toLowerCase() === "check out");
 
-                        let rawDate = row[dateKey];
-                        let inTime = row[inKey];
-                        let outTime = row[outKey];
-
-                        if(rawDate) {
+                        if (dateKey) {
+                            let rawDate = row[dateKey];
+                            let inTime = row[inKey] || "";
+                            let outTime = row[outKey] || "";
                             let day = null;
+
                             if (rawDate instanceof Date) {
                                 day = rawDate.getDate();
+                            } else if (!isNaN(rawDate) && rawDate !== "") {
+                                day = parseInt(rawDate);
                             } else {
                                 let dayStr = String(rawDate).trim();
                                 let parts = dayStr.split(/[-/]/);
@@ -115,25 +118,34 @@
             fileInput.click();
         };
 
+        // Time eka fetch weddi winadiyata hadapu formatTime function eka
         function formatTime(val) {
-            if (!val || val === "00:00") return "00:00";
-            let h, m;
+            if (!val || val === "00:00" || val === "") return "00:00";
+            
+            let h = 0, m = 0;
+
             if (val instanceof Date) {
                 h = val.getHours();
                 m = val.getMinutes();
             } else if (typeof val === 'number') {
-                let totalMinutes = Math.round(val * 24 * 60);
+                // Excel time values (0.something)
+                let totalMinutes = Math.round(val * 1440);
                 h = Math.floor(totalMinutes / 60);
                 m = totalMinutes % 60;
             } else {
+                // String input (e.g. "08:30" or "08:30:45")
                 let parts = String(val).trim().split(':');
-                if(parts.length >= 2) {
+                if (parts.length >= 2) {
                     h = parseInt(parts[0]);
                     m = parseInt(parts[1]);
                 } else {
                     return "00:00";
                 }
             }
+            
+            // පැය 24 ඉක්මවන අවස්ථා (Excel datha wala wenna puluwan)
+            h = h % 24;
+
             return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         }
 
@@ -241,8 +253,6 @@
             const user = auth.currentUser;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
             const docRef = doc(db, "users", user.uid, "months", monthId);
-            const updateObj = {};
-            updateObj[`${day}.${type}`] = value;
             await setDoc(docRef, { [String(day)]: { [type]: value } }, { merge: true });
             renderSheet();
         };
