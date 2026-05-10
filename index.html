@@ -54,8 +54,8 @@
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // April 1 ඇතුළුව සියලු දත්ත ලබා ගැනීමට range: 10 ලෙස වෙනස් කරන ලදී
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 10, defval: "" }); 
+                    // Range 11 means it starts from Row 12
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
@@ -125,8 +125,7 @@
                 return val.toTimeString().substring(0, 5);
             }
             if (typeof val === 'number') {
-                // විනාඩියේ දෝෂය නිවැරදි කිරීමට 0.5ක් එකතු කර රවුම් කරන ලදී
-                let totalMinutes = Math.floor(val * 24 * 60 + 0.5);
+                let totalMinutes = Math.round(val * 24 * 60);
                 let hours = Math.floor(totalMinutes / 60);
                 let mins = totalMinutes % 60;
                 return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
