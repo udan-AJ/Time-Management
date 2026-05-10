@@ -54,8 +54,8 @@
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // range: 0 dala headers check karanna puluwan widiyata datha gannawa
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }); 
+                    // Row 12 headers nisa range 11 damma. defval dala headers miss wenna dunne na.
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" }); 
                     
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");
 
@@ -65,26 +65,23 @@
                     const monthId = `${selectedYear}-${selectedMonth}`;
                     
                     const docRef = doc(db, "users", user.uid, "months", monthId);
-                    
-                    // Get existing data first
                     const docSnap = await getDoc(docRef);
-                    let finalUploadData = docSnap.exists() ? docSnap.data() : {};
+                    let currentData = docSnap.exists() ? docSnap.data() : {};
                     let successCount = 0;
 
                     jsonData.forEach(row => {
-                        let keys = Object.keys(row);
-                        let dateKey = keys.find(k => k.toString().trim().toLowerCase() === "date");
-                        let inKey = keys.find(k => k.toString().trim().toLowerCase() === "check in");
-                        let outKey = keys.find(k => k.toString().trim().toLowerCase() === "check out");
+                        let dateKey = Object.keys(row).find(k => k.trim().toLowerCase() === "date");
+                        let inKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check in");
+                        let outKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check out");
 
-                        if (dateKey) {
-                            let rawDate = row[dateKey];
+                        let rawDate = row[dateKey];
+                        let inTime = row[inKey];
+                        let outTime = row[outKey];
+
+                        if(rawDate) {
                             let day = null;
-
                             if (rawDate instanceof Date) {
                                 day = rawDate.getDate();
-                            } else if (!isNaN(rawDate) && rawDate !== "") {
-                                day = parseInt(rawDate);
                             } else {
                                 let dayStr = String(rawDate).trim();
                                 let parts = dayStr.split(/[-/]/);
@@ -96,10 +93,9 @@
                             }
 
                             if (day && day >= 1 && day <= 31) {
-                                // Update logic
-                                finalUploadData[String(day)] = { 
-                                    in: formatTime(row[inKey]), 
-                                    out: formatTime(row[outKey]) 
+                                currentData[String(day)] = { 
+                                    in: formatTime(inTime), 
+                                    out: formatTime(outTime) 
                                 };
                                 successCount++;
                             }
@@ -107,8 +103,7 @@
                     });
 
                     if(successCount > 0) {
-                        // Merging and saving back to Firestore
-                        await setDoc(docRef, finalUploadData, { merge: true });
+                        await setDoc(docRef, currentData, { merge: true });
                         alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);
                         renderSheet();
                     } else {
@@ -121,16 +116,20 @@
         };
 
         function formatTime(val) {
-            if (!val || val === "00:00" || val === "") return "00:00";
+            if (!val || val === "00:00" || val === "0:00") return "00:00";
+            
             let h = 0, m = 0;
+
             if (val instanceof Date) {
                 h = val.getHours();
                 m = val.getMinutes();
             } else if (typeof val === 'number') {
+                // Time decimals rounding to avoid minute offset
                 let totalMinutes = Math.round(val * 1440);
                 h = Math.floor(totalMinutes / 60);
                 m = totalMinutes % 60;
             } else {
+                // Handles strings like "7:57" or "07:57:00"
                 let parts = String(val).trim().split(':');
                 if (parts.length >= 2) {
                     h = parseInt(parts[0]);
@@ -139,25 +138,32 @@
                     return "00:00";
                 }
             }
+            
             h = h % 24;
             return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         }
 
-        // --- 2. CALCULATION LOGIC ---
         function calculateHours(inTime, outTime) {
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") return 0;
+            
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
+            
             let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
-            if (totalMinutes < 0) totalMinutes += 1440; 
+            if (totalMinutes < 0) totalMinutes += 1440;
+            
             let rawHours = totalMinutes / 60;
             let integerPart = Math.floor(rawHours);
             let decimalPart = rawHours - integerPart;
-            let roundedDecimal = (decimalPart < 0.25) ? 0.0 : (decimalPart < 0.55 ? 0.5 : 1.0);
+            
+            let roundedDecimal;
+            if (decimalPart < 0.25) roundedDecimal = 0.0;
+            else if (decimalPart < 0.55) roundedDecimal = 0.5;
+            else roundedDecimal = 1.0;
+
             return (integerPart + roundedDecimal).toFixed(1);
         }
 
-        // --- 3. UI FUNCTIONS ---
         async function loadHolidays() {
             const user = auth.currentUser;
             const q = query(collection(db, "users", user.uid, "holidays"));
@@ -199,11 +205,15 @@
             const container = document.getElementById('sheetContainer');
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const monthId = `${year}-${month + 1}`;
+            
             container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs'>Loading...</div>";
+            
             const docSnap = await getDoc(doc(db, "users", user.uid, "months", monthId));
             const savedData = docSnap.exists() ? docSnap.data() : {};
+
             container.innerHTML = "";
             let monthlyTotal = 0;
+
             for (let d = 1; d <= daysInMonth; d++) {
                 const dateObj = new Date(year, month, d);
                 const dateStr = dateObj.toLocaleDateString('en-CA');
@@ -212,6 +222,7 @@
                 const dayData = savedData[String(d)] || { in: "", out: "" };
                 const hrs = calculateHours(dayData.in, dayData.out);
                 monthlyTotal += parseFloat(hrs);
+
                 const row = document.createElement('div');
                 row.className = `flex items-center gap-2 p-3 border-b ${isHoliday ? 'bg-red-50' : (isWeekend ? 'bg-orange-50' : 'bg-white')}`;
                 row.innerHTML = `
@@ -234,13 +245,7 @@
             const user = auth.currentUser;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
             const docRef = doc(db, "users", user.uid, "months", monthId);
-            // Single update call
-            let updateObj = {};
-            updateObj[`${day}.${type}`] = value;
-            await updateDoc(docRef, updateObj).catch(async (e) => {
-                // If doc doesn't exist, create it
-                await setDoc(docRef, { [String(day)]: { [type]: value } }, { merge: true });
-            });
+            await setDoc(docRef, { [String(day)]: { [type]: value } }, { merge: true });
             renderSheet();
         };
 
