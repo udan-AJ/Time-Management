@@ -39,7 +39,7 @@
             }    
         });    
     
-        // --- 1. FIXED EXCEL IMPORT LOGIC ---    
+        // --- 1. EXCEL IMPORT LOGIC (FIXED FOR YOUR FILE) ---    
         window.importExcel = () => {    
             const fileInput = document.createElement('input');    
             fileInput.type = 'file';    
@@ -51,12 +51,11 @@
                     
                 reader.onload = async (event) => {    
                     const data = new Uint8Array(event.target.result);    
-                    // cellDates: true සහ dateNF වැදගත් වෙනවා හරියටම වෙලාව ගන්න    
-                    const workbook = XLSX.read(data, { type: 'array', cellDates: true, dateNF: 'HH:mm' });    
+                    // cellDates: true දැමීමෙන් 07:57:00 වැනි වෙලාවන් නිවැරදිව කියවිය හැක
+                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });    
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];    
                         
-                    // Header එක තියෙන්නේ Row 12 (Index 11).     
-                    // range: "A12:Z500" වගේ දුන්නම 12 පේළියේ headers අරගෙන 13 පේළියේ ඉඳන් දත්ත ටික ගන්නවා.    
+                    // Row 12 (Index 11) සිට දත්ත කියවීම අරඹයි
                     const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" });     
                         
                     if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");    
@@ -72,9 +71,10 @@
                     let successCount = 0;    
     
                     jsonData.forEach(row => {    
-                        let dateKey = Object.keys(row).find(k => k.trim().toLowerCase() === "date");    
-                        let inKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check in");    
-                        let outKey = Object.keys(row).find(k => k.trim().toLowerCase() === "check out");    
+                        // Headers සොයාගැනීම (Trim කිරීම වැදගත්)
+                        let dateKey = Object.keys(row).find(k => k.trim() === "Date");    
+                        let inKey = Object.keys(row).find(k => k.trim() === "Check In");    
+                        let outKey = Object.keys(row).find(k => k.trim() === "Check Out");    
     
                         let rawDate = row[dateKey];    
                         let inTime = row[inKey];    
@@ -85,9 +85,11 @@
                             if (rawDate instanceof Date) {    
                                 day = rawDate.getDate();    
                             } else {    
+                                // 2026-04-01 වැනි format එකකින් දිනය වෙන් කර ගැනීම
                                 let dayStr = String(rawDate).trim();    
-                                let parts = dayStr.split(/[-/]/);    
+                                let parts = dayStr.split(/[-/ ]/);    
                                 if (parts.length >= 3) {    
+                                    // වසර මුලට ඇත්නම් (YYYY-MM-DD), 3වෙනි කොටස (index 2) දිනය වේ
                                     day = parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0]);    
                                 } else {    
                                     day = parseInt(dayStr);    
@@ -109,7 +111,7 @@
                         alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);    
                         renderSheet();    
                     } else {    
-                        alert("දත්ත කියවීමට නොහැකි විය. Headers (Date, Check In, Check Out) Row 12 හි තිබේදැයි බලන්න.");    
+                        alert("දත්ත කියවීමට නොහැකි විය. Headers නිවැරදිදැයි බලන්න.");    
                     }    
                 };    
                 reader.readAsArrayBuffer(file);    
@@ -117,22 +119,19 @@
             fileInput.click();    
         };    
     
-        // විනාඩියක් අඩුවෙන් එන ප්‍රශ්නයට විසඳුම මෙතන තියෙනවා (Math.round භාවිතා කර ඇත)    
+        // 00:00 සහ UTC Time නිවැරදිව හසුරුවන Function එක
         function formatTime(val) {    
-            if (!val || val === "00:00" || val === "0:00") return "00:00";    
+            if (val === undefined || val === null || val === "" || val === "00:00:00") return "00:00";    
                 
             let h = 0, m = 0;    
     
             if (val instanceof Date) {    
-                // Date object එකකින් ගද්දී තත්පර නිසා විනාඩියක් වෙනස් වෙන්න පුළුවන්    
-                // ඒ නිසා තත්පර 30ට වැඩි නම් විනාඩියක් එකතු කරලා round කරනවා    
-                let seconds = val.getSeconds();    
-                h = val.getHours();    
-                m = val.getMinutes();    
-                if (seconds >= 30) m++;    
+                // Excel Date objects බොහෝ විට UTC බැවින් getUTC භාවිතා කිරීම වඩාත් නිවැරදියි
+                h = val.getUTCHours();    
+                m = val.getUTCMinutes();    
+                if (val.getUTCSeconds() >= 30) m++;    
                 if (m >= 60) { m = 0; h++; }    
             } else if (typeof val === 'number') {    
-                // Excel numbers වලදී 0.5 වගේ එකතු කරලා තමයි හරියටම minute එක ගන්නේ    
                 let totalMinutes = Math.round(val * 1440);    
                 h = Math.floor(totalMinutes / 60);    
                 m = totalMinutes % 60;    
@@ -296,11 +295,11 @@
                         <h2 id="totalHrs" class="text-4xl font-black">0.0 Hrs</h2>    
                         <div class="flex gap-2 mt-4">    
                             <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">    
-                                <option value="2026">2026</option><option value="2025" selected>2025</option>    
+                                <option value="2026" selected>2026</option><option value="2025">2025</option>    
                             </select>    
                             <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none">    
                                 <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>    
-                                <option value="3">APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>    
+                                <option value="3" selected>APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>    
                                 <option value="6">JULY</option><option value="7">AUGUST</option><option value="8">SEPTEMBER</option>    
                                 <option value="9">OCTOBER</option><option value="10">NOVEMBER</option><option value="11">DECEMBER</option>    
                             </select>    
@@ -333,4 +332,4 @@
         </div>    
     </div>    
 </body>    
-</html>  
+</html>
