@@ -39,26 +39,25 @@
             }    
         });    
     
-        // --- 1. EXCEL IMPORT LOGIC (FIXED FOR YOUR FILE) ---    
+        // --- EXCEL IMPORT LOGIC (FIXED FOR YOUR CSV/XLSX) ---    
         window.importExcel = () => {    
             const fileInput = document.createElement('input');    
             fileInput.type = 'file';    
-            fileInput.accept = '.xlsx, .xls';    
+            fileInput.accept = '.xlsx, .xls, .csv';    
                 
             fileInput.onchange = async (e) => {    
                 const file = e.target.files[0];    
                 const reader = new FileReader();    
                     
                 reader.onload = async (event) => {    
-                    const data = new Uint8Array(event.target.result);    
-                    // cellDates: true දැමීමෙන් 07:57:00 වැනි වෙලාවන් නිවැරදිව කියවිය හැක
+                    const data = new Uint8Array(event.target.result);
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });    
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];    
                         
-                    // Row 12 (Index 11) සිට දත්ත කියවීම අරඹයි
-                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "" });     
+                    // range: 11 යනු Row 12 සිට කියවීමයි. raw: false මගින් formatted වෙලාව ලබාගනී.
+                    const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "", raw: false });     
                         
-                    if(jsonData.length === 0) return alert("Excel ගොනුවේ දත්ත හමු වුනේ නැත!");    
+                    if(jsonData.length === 0) return alert("දත්ත සොයාගත නොහැකි විය!");    
     
                     const user = auth.currentUser;    
                     const selectedYear = document.getElementById('yearSelect').value;    
@@ -71,35 +70,30 @@
                     let successCount = 0;    
     
                     jsonData.forEach(row => {    
-                        // Headers සොයාගැනීම (Trim කිරීම වැදගත්)
                         let dateKey = Object.keys(row).find(k => k.trim() === "Date");    
                         let inKey = Object.keys(row).find(k => k.trim() === "Check In");    
                         let outKey = Object.keys(row).find(k => k.trim() === "Check Out");    
     
                         let rawDate = row[dateKey];    
-                        let inTime = row[inKey];    
-                        let outTime = row[outKey];    
+                        let inVal = row[inKey];    
+                        let outVal = row[outKey];    
     
                         if(rawDate) {    
-                            let day = null;    
-                            if (rawDate instanceof Date) {    
-                                day = rawDate.getDate();    
-                            } else {    
-                                // 2026-04-01 වැනි format එකකින් දිනය වෙන් කර ගැනීම
-                                let dayStr = String(rawDate).trim();    
-                                let parts = dayStr.split(/[-/ ]/);    
-                                if (parts.length >= 3) {    
-                                    // වසර මුලට ඇත්නම් (YYYY-MM-DD), 3වෙනි කොටස (index 2) දිනය වේ
-                                    day = parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0]);    
-                                } else {    
-                                    day = parseInt(dayStr);    
-                                }    
-                            }    
+                            let day = null;
+                            let dayStr = String(rawDate).trim();
+                            let parts = dayStr.split(/[-/ ]/);
+                            
+                            // දින වෙන් කර ගැනීම (YYYY-MM-DD හෝ DD-MM-YYYY)
+                            if (parts.length >= 3) {
+                                day = parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0]);
+                            } else {
+                                day = parseInt(dayStr);
+                            }
     
                             if (day && day >= 1 && day <= 31) {    
                                 currentData[String(day)] = {     
-                                    in: formatTime(inTime),     
-                                    out: formatTime(outTime)     
+                                    in: cleanTime(inVal),     
+                                    out: cleanTime(outVal)     
                                 };    
                                 successCount++;    
                             }    
@@ -119,35 +113,17 @@
             fileInput.click();    
         };    
     
-        // 00:00 සහ UTC Time නිවැරදිව හසුරුවන Function එක
-        function formatTime(val) {    
-            if (val === undefined || val === null || val === "" || val === "00:00:00") return "00:00";    
-                
-            let h = 0, m = 0;    
-    
-            if (val instanceof Date) {    
-                // Excel Date objects බොහෝ විට UTC බැවින් getUTC භාවිතා කිරීම වඩාත් නිවැරදියි
-                h = val.getUTCHours();    
-                m = val.getUTCMinutes();    
-                if (val.getUTCSeconds() >= 30) m++;    
-                if (m >= 60) { m = 0; h++; }    
-            } else if (typeof val === 'number') {    
-                let totalMinutes = Math.round(val * 1440);    
-                h = Math.floor(totalMinutes / 60);    
-                m = totalMinutes % 60;    
-            } else {    
-                let parts = String(val).trim().split(':');    
-                if (parts.length >= 2) {    
-                    h = parseInt(parts[0]);    
-                    m = parseInt(parts[1]);    
-                } else {    
-                    return "00:00";    
-                }    
-            }    
-                
-            h = h % 24;    
-            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;    
-        }    
+        // වෙලාව නිවැරදිව පිරිසිදු කරන අලුත්ම function එක
+        function cleanTime(val) {
+            if (!val || val === "-" || val === "" || val === " ") return "00:00";
+            
+            // Regex මගින් HH:mm කොටස පමණක් ලබාගනී (07:57:00 -> 07:57)
+            let timeMatch = String(val).match(/(\d{1,2}):(\d{1,2})/);
+            if (timeMatch) {
+                return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2].padStart(2, '0')}`;
+            }
+            return "00:00";
+        }
     
         function calculateHours(inTime, outTime) {    
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") return 0;    
