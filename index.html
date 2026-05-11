@@ -39,7 +39,7 @@
             }    
         });    
     
-        // --- 1. EXCEL IMPORT LOGIC ---    
+        // --- 1. EXCEL IMPORT LOGIC (FIXED FOR OVERNIGHT SHIFTS) ---    
         window.importExcel = () => {    
             const fileInput = document.createElement('input');    
             fileInput.type = 'file';    
@@ -64,7 +64,8 @@
                         let dateKey = Object.keys(row).find(k => k.trim() === "Date");    
                         let inKey = Object.keys(row).find(k => k.trim() === "Check In");    
                         let outKey = Object.keys(row).find(k => k.trim() === "Check Out");    
-    
+                        let outDateKey = Object.keys(row).find(k => k.trim() === "Out Date"); // අලුතින් එකතු කළා
+
                         let rawDate = row[dateKey];    
                         if(rawDate) {    
                             let dayStr = String(rawDate).trim();
@@ -72,16 +73,23 @@
                             let day = parts.length >= 3 ? (parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0])) : parseInt(dayStr);
     
                             if (day && day >= 1 && day <= 31) {    
+                                // Check if work ended on a different day
+                                let isNextDay = false;
+                                if(row[outDateKey] && row[outDateKey] !== "-" && row[outDateKey] !== " ") {
+                                    if(String(row[outDateKey]).trim() !== dayStr) isNextDay = true;
+                                }
+
                                 currentData[String(day)] = {     
                                     in: cleanTime(row[inKey]),     
-                                    out: cleanTime(row[outKey])     
+                                    out: cleanTime(row[outKey]),
+                                    isNextDay: isNextDay // Database එකට save කරනවා
                                 };    
                             }    
                         }    
                     });    
     
                     await setDoc(docRef, currentData, { merge: true });    
-                    alert(`සාර්ථකයි!`);    
+                    alert(`දත්ත ආයාත කිරීම සාර්ථකයි!`);    
                     renderSheet();    
                 };    
                 reader.readAsArrayBuffer(file);    
@@ -90,7 +98,7 @@
         };    
 
         window.clearMonthData = async () => {
-            if(!confirm("මෙම මාසයේ දත්ත මකා දැමීමට ඔබට විශ්වාසද?")) return;
+            if(!confirm("දත්ත මකා දැමීමට ඔබට විශ්වාසද?")) return;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
             await deleteDoc(doc(db, "users", auth.currentUser.uid, "months", monthId));
             renderSheet();
@@ -103,48 +111,35 @@
             return "00:00";
         }
 
-        // --- නව ගණනය කිරීමේ තර්කය (Calculation Logic) ---
-        function calculateRow(inTime, outTime, isWeekend, isHoliday, dayOfWeek) {
+        // --- ගණනය කිරීමේ තර්කය (Next Day logic එක සහිතව) ---
+        function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay) {
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") {
                 return { ot: 0, specialOt: 0, lieu: false };
             }
 
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
+            
             let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
-            if (totalMinutes < 0) totalMinutes += 1440;
+            
+            // පිටවීමේ දිනය පසුදා නම් විනාඩි 1440ක් (පැය 24) එකතු කරයි
+            if (isNextDay || totalMinutes < 0) {
+                totalMinutes += 1440;
+            }
             
             let actualHours = totalMinutes / 60;
-            
-            // Rounding rules
             let integerPart = Math.floor(actualHours);
             let decimalPart = actualHours - integerPart;
             let roundedHours = integerPart + (decimalPart < 0.25 ? 0.0 : (decimalPart < 0.55 ? 0.5 : 1.0));
 
-            // ඉරිදා (0) හෝ නිවාඩු දින (Holiday/Poya)
             if (dayOfWeek === 0 || isHoliday) {
-                return { 
-                    ot: 0, 
-                    specialOt: roundedHours, 
-                    lieu: roundedHours >= 9 
-                };
+                return { ot: 0, specialOt: roundedHours, lieu: roundedHours >= 9 };
             } 
-            // සෙනසුරාදා (6)
             else if (dayOfWeek === 6) {
-                return { 
-                    ot: roundedHours, 
-                    specialOt: 0, 
-                    lieu: false 
-                };
+                return { ot: roundedHours, specialOt: 0, lieu: false };
             } 
-            // සතියේ දින (Weekdays)
             else {
-                let otHours = Math.max(0, roundedHours - 9);
-                return { 
-                    ot: otHours, 
-                    specialOt: 0, 
-                    lieu: false 
-                };
+                return { ot: Math.max(0, roundedHours - 9), specialOt: 0, lieu: false };
             }
         }
     
@@ -176,7 +171,7 @@
                     <span class="font-bold text-slate-700">${date}</span>    
                     <button onclick="removeHoliday('${date}')" class="text-red-500 text-[10px] font-black uppercase">Remove</button>    
                 </div>    
-            `).join('') || `<p class="text-slate-400 text-xs text-center py-4">No Holidays Added</p>`;    
+            `).join('') || `<p class="text-slate-400 text-xs text-center py-4">No Holidays</p>`;    
         }    
     
         async function renderSheet() {    
@@ -192,18 +187,16 @@
             const savedData = docSnap.exists() ? docSnap.data() : {};    
     
             container.innerHTML = "";    
-            let totalOT = 0;    
-            let totalSpecialOT = 0;
-            let totalLieu = 0;
+            let totalOT = 0, totalSpecialOT = 0, totalLieu = 0;
     
             for (let d = 1; d <= daysInMonth; d++) {    
                 const dateObj = new Date(year, month, d);    
                 const dateStr = dateObj.toLocaleDateString('en-CA');    
                 const dayOfWeek = dateObj.getDay();
                 const isHoliday = userHolidays.includes(dateStr);    
-                const dayData = savedData[String(d)] || { in: "", out: "" };    
+                const dayData = savedData[String(d)] || { in: "", out: "", isNextDay: false };    
                 
-                const result = calculateRow(dayData.in, dayData.out, false, isHoliday, dayOfWeek);
+                const result = calculateRow(dayData.in, dayData.out, isHoliday, dayOfWeek, dayData.isNextDay);
                 
                 totalOT += result.ot;
                 totalSpecialOT += result.specialOt;
@@ -217,13 +210,18 @@
                         <span class="text-lg font-black text-slate-700 leading-none">${d}</span>    
                     </div>    
                     <div class="flex-1 grid grid-cols-2 gap-2">    
-                        <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="p-2 rounded-xl border text-xs outline-none focus:ring-2 focus:ring-blue-400">    
-                        <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="p-2 rounded-xl border text-xs outline-none focus:ring-2 focus:ring-blue-400">    
+                        <div class="relative">
+                            <input type="time" value="${dayData.in}" onchange="updateRecord(${d}, 'in', this.value)" class="w-full p-2 rounded-xl border text-xs outline-none">
+                        </div>
+                        <div class="relative flex items-center">
+                            <input type="time" value="${dayData.out}" onchange="updateRecord(${d}, 'out', this.value)" class="w-full p-2 rounded-xl border text-xs outline-none">
+                            ${dayData.isNextDay ? '<span class="absolute -top-2 -right-1 text-[8px] bg-red-500 text-white px-1 rounded-full">+1</span>' : ''}
+                        </div>
                     </div>    
                     <div class="w-16 text-right leading-tight">    
-                        <div class="text-[10px] font-black ${result.ot > 0 ? 'text-blue-600' : 'text-slate-300'}">OT: ${result.ot}</div>
-                        <div class="text-[10px] font-black ${result.specialOt > 0 ? 'text-red-600' : 'text-slate-300'}">SOT: ${result.specialOt}</div>
-                        ${result.lieu ? '<div class="text-[8px] font-bold text-green-600">LIEU ✓</div>' : ''}
+                        <div class="text-[9px] font-black ${result.ot > 0 ? 'text-blue-600' : 'text-slate-300'}">${result.ot} OT</div>
+                        <div class="text-[9px] font-black ${result.specialOt > 0 ? 'text-red-600' : 'text-slate-300'}">${result.specialOt} SOT</div>
+                        ${result.lieu ? '<div class="text-[8px] font-bold text-green-600">LIEU</div>' : ''}
                     </div>    
                 `;    
                 container.appendChild(row);    
@@ -277,7 +275,7 @@
             <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6">    
                 <div class="flex justify-between items-center mb-4">    
                     <div>    
-                        <p class="text-[10px] font-black uppercase opacity-60 mb-1">Calculation Overview</p>    
+                        <p class="text-[10px] font-black uppercase opacity-60 mb-1">Calculations</p>    
                         <h2 id="totalHrs" class="text-xl font-black">OT: 0.0 | Special: 0.0</h2>    
                     </div>    
                     <button onclick="logout()" class="bg-white/20 text-[8px] px-3 py-2 rounded-lg font-black uppercase">Logout</button>
@@ -303,9 +301,9 @@
     
         <div id="holidayView" class="hidden p-6">    
             <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 mb-6">    
-                <h3 class="font-black mb-4 uppercase text-xs">Add Special Holiday / Poya</h3>    
+                <h3 class="font-black mb-4 uppercase text-xs">Add Holiday</h3>    
                 <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none">    
-                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition">ADD TO HOLIDAY LIST</button>    
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition">ADD TO LIST</button>    
             </div>    
             <div id="holidayList"></div>    
         </div>    
