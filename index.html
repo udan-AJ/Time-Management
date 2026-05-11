@@ -39,7 +39,7 @@
             }    
         });    
     
-        // --- EXCEL IMPORT LOGIC (FIXED FOR YOUR CSV/XLSX) ---    
+        // --- EXCEL IMPORT LOGIC ---    
         window.importExcel = () => {    
             const fileInput = document.createElement('input');    
             fileInput.type = 'file';    
@@ -53,102 +53,83 @@
                     const data = new Uint8Array(event.target.result);
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });    
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];    
-                        
-                    // range: 11 යනු Row 12 සිට කියවීමයි. raw: false මගින් formatted වෙලාව ලබාගනී.
                     const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "", raw: false });     
                         
                     if(jsonData.length === 0) return alert("දත්ත සොයාගත නොහැකි විය!");    
     
                     const user = auth.currentUser;    
-                    const selectedYear = document.getElementById('yearSelect').value;    
-                    const selectedMonth = parseInt(document.getElementById('monthSelect').value) + 1;    
-                    const monthId = `${selectedYear}-${selectedMonth}`;    
-                        
-                    const docRef = doc(db, "users", user.uid, "months", monthId);    
-                    const docSnap = await getDoc(docRef);    
-                    let currentData = docSnap.exists() ? docSnap.data() : {};    
-                    let successCount = 0;    
-    
+                    const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;    
+                    const docRef = doc(db, "users", user.uid, "months", monthId);
+                    let currentData = {}; // අලුතින් Import කරන නිසා හිස් එකකින් පටන් ගනී
+
                     jsonData.forEach(row => {    
                         let dateKey = Object.keys(row).find(k => k.trim() === "Date");    
                         let inKey = Object.keys(row).find(k => k.trim() === "Check In");    
                         let outKey = Object.keys(row).find(k => k.trim() === "Check Out");    
     
                         let rawDate = row[dateKey];    
-                        let inVal = row[inKey];    
-                        let outVal = row[outKey];    
-    
                         if(rawDate) {    
-                            let day = null;
                             let dayStr = String(rawDate).trim();
                             let parts = dayStr.split(/[-/ ]/);
-                            
-                            // දින වෙන් කර ගැනීම (YYYY-MM-DD හෝ DD-MM-YYYY)
-                            if (parts.length >= 3) {
-                                day = parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0]);
-                            } else {
-                                day = parseInt(dayStr);
-                            }
+                            let day = parts.length >= 3 ? (parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0])) : parseInt(dayStr);
     
                             if (day && day >= 1 && day <= 31) {    
                                 currentData[String(day)] = {     
-                                    in: cleanTime(inVal),     
-                                    out: cleanTime(outVal)     
+                                    in: cleanTime(row[inKey]),     
+                                    out: cleanTime(row[outKey])     
                                 };    
-                                successCount++;    
                             }    
                         }    
                     });    
     
-                    if(successCount > 0) {    
-                        await setDoc(docRef, currentData, { merge: true });    
-                        alert(`සාර්ථකයි! දින ${successCount} ක දත්ත ඇතුළත් කළා.`);    
-                        renderSheet();    
-                    } else {    
-                        alert("දත්ත කියවීමට නොහැකි විය. Headers නිවැරදිදැයි බලන්න.");    
-                    }    
+                    await setDoc(docRef, currentData, { merge: true });    
+                    alert(`දත්ත ඇතුළත් කිරීම සාර්ථකයි!`);    
+                    renderSheet();    
                 };    
                 reader.readAsArrayBuffer(file);    
             };    
             fileInput.click();    
         };    
+
+        // --- CLEAR DATA LOGIC ---
+        window.clearMonthData = async () => {
+            if(!confirm("තෝරාගත් මාසයට අදාළ සියලුම දත්ත මකා දැමීමට ඔබට විශ්වාසද?")) return;
+
+            const user = auth.currentUser;
+            const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
+            const docRef = doc(db, "users", user.uid, "months", monthId);
+
+            try {
+                // Firestore එකෙන් මුළු document එකම මකා දමයි
+                await deleteDoc(docRef);
+                alert("දත්ත සාර්ථකව මකා දැමුවා.");
+                renderSheet();
+            } catch (error) {
+                alert("දෝෂයක් ඇති විය: " + error.message);
+            }
+        };
     
-        // වෙලාව නිවැරදිව පිරිසිදු කරන අලුත්ම function එක
         function cleanTime(val) {
             if (!val || val === "-" || val === "" || val === " ") return "00:00";
-            
-            // Regex මගින් HH:mm කොටස පමණක් ලබාගනී (07:57:00 -> 07:57)
             let timeMatch = String(val).match(/(\d{1,2}):(\d{1,2})/);
-            if (timeMatch) {
-                return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2].padStart(2, '0')}`;
-            }
+            if (timeMatch) return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2].padStart(2, '0')}`;
             return "00:00";
         }
     
         function calculateHours(inTime, outTime) {    
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") return 0;    
-                
             let [h1, m1] = inTime.split(':').map(Number);    
             let [h2, m2] = outTime.split(':').map(Number);    
-                
             let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);    
             if (totalMinutes < 0) totalMinutes += 1440;    
-                
             let rawHours = totalMinutes / 60;    
             let integerPart = Math.floor(rawHours);    
-            let decimalPart = rawHours - integerPart;    
-                
-            let roundedDecimal;    
-            if (decimalPart < 0.25) roundedDecimal = 0.0;    
-            else if (decimalPart < 0.55) roundedDecimal = 0.5;    
-            else roundedDecimal = 1.0;    
-    
+            let roundedDecimal = (rawHours - integerPart < 0.25) ? 0.0 : (rawHours - integerPart < 0.55 ? 0.5 : 1.0);    
             return (integerPart + roundedDecimal).toFixed(1);    
         }    
     
         async function loadHolidays() {    
-            const user = auth.currentUser;    
-            const q = query(collection(db, "users", user.uid, "holidays"));    
+            const q = query(collection(db, "users", auth.currentUser.uid, "holidays"));    
             const querySnapshot = await getDocs(q);    
             userHolidays = [];    
             querySnapshot.forEach((doc) => userHolidays.push(doc.id));    
@@ -170,8 +151,7 @@
         };    
     
         function renderHolidayList() {    
-            const list = document.getElementById('holidayList');    
-            list.innerHTML = userHolidays.map(date => `    
+            document.getElementById('holidayList').innerHTML = userHolidays.map(date => `    
                 <div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl mb-2 border border-slate-200">    
                     <span class="font-bold text-slate-700">${date}</span>    
                     <button onclick="removeHoliday('${date}')" class="text-red-500 text-[10px] font-black uppercase">Remove</button>    
@@ -189,7 +169,6 @@
             const monthId = `${year}-${month + 1}`;    
                 
             container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs'>Loading...</div>";    
-                
             const docSnap = await getDoc(doc(db, "users", user.uid, "months", monthId));    
             const savedData = docSnap.exists() ? docSnap.data() : {};    
     
@@ -224,10 +203,8 @@
         }    
     
         window.updateRecord = async (day, type, value) => {    
-            const user = auth.currentUser;    
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;    
-            const docRef = doc(db, "users", user.uid, "months", monthId);    
-            await setDoc(docRef, { [String(day)]: { [type]: value } }, { merge: true });    
+            await setDoc(doc(db, "users", auth.currentUser.uid, "months", monthId), { [String(day)]: { [type]: value } }, { merge: true });    
             renderSheet();    
         };    
     
@@ -282,7 +259,8 @@
                         </div>    
                     </div>    
                     <div class="flex flex-col gap-2">    
-                        <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">IMPORT EXCEL</button>    
+                        <button onclick="importExcel()" class="bg-white text-blue-600 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">IMPORT EXCEL</button>
+                        <button onclick="clearMonthData()" class="bg-red-500 text-white text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">CLEAR DATA</button>    
                         <button onclick="logout()" class="bg-white/20 text-[10px] px-4 py-2 rounded-xl font-black active:scale-95 transition">LOGOUT</button>    
                     </div>    
                 </div>    
