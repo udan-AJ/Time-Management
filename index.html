@@ -43,49 +43,37 @@
             const fileInput = document.createElement('input');    
             fileInput.type = 'file';    
             fileInput.accept = '.xlsx, .xls, .csv';    
-                
             fileInput.onchange = async (e) => {    
                 const file = e.target.files[0];    
                 const reader = new FileReader();    
-                    
                 reader.onload = async (event) => {    
                     const data = new Uint8Array(event.target.result);
                     const workbook = XLSX.read(data, { type: 'array', cellDates: true });    
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];    
                     const jsonData = XLSX.utils.sheet_to_json(firstSheet, { range: 11, defval: "", raw: false });     
-                        
                     const user = auth.currentUser;    
                     const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;    
                     const docRef = doc(db, "users", user.uid, "months", monthId);
                     let currentData = {}; 
-
                     jsonData.forEach(row => {    
                         let dateKey = Object.keys(row).find(k => k.trim() === "Date");    
                         let inKey = Object.keys(row).find(k => k.trim() === "Check In");    
                         let outKey = Object.keys(row).find(k => k.trim() === "Check Out");    
                         let outDateKey = Object.keys(row).find(k => k.trim() === "Out Date"); 
-
                         let rawDate = row[dateKey];    
                         if(rawDate) {    
                             let dayStr = String(rawDate).trim();
                             let parts = dayStr.split(/[-/ ]/);
                             let day = parts.length >= 3 ? (parts[0].length === 4 ? parseInt(parts[2]) : parseInt(parts[0])) : parseInt(dayStr);
-    
                             if (day && day >= 1 && day <= 31) {    
                                 let isNextDay = false;
                                 if(row[outDateKey] && row[outDateKey].trim() !== "" && row[outDateKey].trim() !== "-") {
                                     if(String(row[outDateKey]).trim() !== dayStr) isNextDay = true;
                                 }
-
-                                currentData[String(day)] = {     
-                                    in: cleanTime(row[inKey]),     
-                                    out: cleanTime(row[outKey]),
-                                    isNextDay: isNextDay
-                                };    
+                                currentData[String(day)] = { in: cleanTime(row[inKey]), out: cleanTime(row[outKey]), isNextDay: isNextDay };    
                             }    
                         }    
                     });    
-    
                     await setDoc(docRef, currentData, { merge: true });    
                     alert(`දත්ත ආයාත කළා!`);    
                     renderSheet();    
@@ -109,11 +97,10 @@
             return "00:00";
         }
 
-        // --- නව ගණනය කිරීමේ තර්කය ---
         function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay, wasFullDayShift) {
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") {
                 let req = (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) ? 0 : 9;
-                return { worked: 0, req: req, ot: 0, specialOt: 0, lieu: false, isFullDay: false };
+                return { worked: 0, req: req, ot: 0, specialOt: 0, lieu: false, isFullDay: false, isShort: false };
             }
 
             let [h1, m1] = inTime.split(':').map(Number);
@@ -121,30 +108,33 @@
             let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
             if (isNextDay) totalMinutes += 1440;
             
-            let actualHours = totalMinutes / 60;
-            let integerPart = Math.floor(actualHours);
-            let decimalPart = actualHours - integerPart;
-            let roundedWorked = integerPart + (decimalPart < 0.25 ? 0.0 : (decimalPart < 0.55 ? 0.5 : 1.0));
+            let hWork = Math.floor(totalMinutes / 60);
+            let mWork = totalMinutes % 60;
+            let roundedWorked = hWork + (mWork >= 25 && mWork <= 54 ? 0.5 : (mWork >= 55 ? 1.0 : 0));
 
-            // පැය 15කට වඩා වැඩ කර ඇත්නම් එය Full-day (Day/Night) ලෙස සලකයි
             let isFullDay = roundedWorked >= 15; 
-            let requiredHours = 9;
+            let requiredHours = (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) ? 0 : (isFullDay ? 18 : 9);
 
-            if (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) {
-                requiredHours = 0;
-            } else if (isFullDay) {
-                requiredHours = 18; 
+            // --- Short Time Logic ---
+            let isShort = false;
+            let inTotal = h1 * 60 + m1;
+            let outTotal = h2 * 60 + m2;
+
+            if (isFullDay) { // Day Night
+                if (inTotal > (8 * 60 + 45) || (!isNextDay) || (isNextDay && outTotal < (4 * 60 + 55))) isShort = true;
+            } else if (isNextDay) { // Night Shift
+                if (inTotal > (20 * 60) || outTotal < (5 * 60)) isShort = true;
+            } else { // Day Shift
+                if (inTotal > (8 * 60 + 45) || outTotal < (17 * 60)) isShort = true;
             }
 
             if (dayOfWeek === 0 || isHoliday) {
-                return { worked: roundedWorked, req: requiredHours, ot: 0, specialOt: roundedWorked, lieu: roundedWorked >= 9, isFullDay };
-            } 
-            else if (dayOfWeek === 6) {
-                return { worked: roundedWorked, req: requiredHours, ot: roundedWorked, specialOt: 0, lieu: false, isFullDay };
-            } 
-            else {
+                return { worked: roundedWorked, req: requiredHours, ot: 0, specialOt: roundedWorked, lieu: roundedWorked >= 9, isFullDay, isShort };
+            } else if (dayOfWeek === 6) {
+                return { worked: roundedWorked, req: requiredHours, ot: roundedWorked, specialOt: 0, lieu: false, isFullDay, isShort };
+            } else {
                 let ot = Math.max(0, roundedWorked - requiredHours);
-                return { worked: roundedWorked, req: requiredHours, ot: ot, specialOt: 0, lieu: false, isFullDay };
+                return { worked: roundedWorked, req: requiredHours, ot: ot, specialOt: 0, lieu: false, isFullDay, isShort };
             }
         }
     
@@ -192,7 +182,7 @@
             const savedData = docSnap.exists() ? docSnap.data() : {};    
     
             container.innerHTML = "";    
-            let totalOT = 0, totalSpecialOT = 0, totalLieu = 0;
+            let totalOT = 0, totalSpecialOT = 0, totalLieu = 0, totalShort = 0;
             let lastDayWasFullShift = false;
     
             for (let d = 1; d <= daysInMonth; d++) {    
@@ -201,14 +191,13 @@
                 const dayOfWeek = dateObj.getDay();
                 const isHoliday = userHolidays.includes(dateStr);    
                 const dayData = savedData[String(d)] || { in: "", out: "", isNextDay: false };    
-                
                 const result = calculateRow(dayData.in, dayData.out, isHoliday, dayOfWeek, dayData.isNextDay, lastDayWasFullShift);
                 
                 lastDayWasFullShift = result.isFullDay;
-
                 totalOT += result.ot;
                 totalSpecialOT += result.specialOt;
                 if(result.lieu) totalLieu++;
+                if(result.isShort) totalShort++;
     
                 const row = document.createElement('div');    
                 row.className = `flex items-center gap-1 p-3 border-b ${isHoliday ? 'bg-red-50' : (dayOfWeek === 0 ? 'bg-orange-50' : (dayOfWeek === 6 ? 'bg-blue-50' : 'bg-white'))}`;    
@@ -224,26 +213,30 @@
                             ${dayData.isNextDay ? '<span class="absolute -top-1 -right-1 text-[7px] bg-red-500 text-white px-1 rounded-full">+1</span>' : ''}
                         </div>
                     </div>
-                    <div class="w-20 grid grid-cols-2 text-center text-[9px] font-bold border-l border-slate-100 px-1">
+                    <div class="w-20 grid grid-cols-2 text-center text-[8px] font-bold border-l border-slate-100 px-1">
                         <div class="text-slate-500 border-r border-slate-100">
-                            <p class="text-[6px] opacity-50 uppercase">Worked</p>${result.worked}
+                            <p class="text-[5px] opacity-50 uppercase">Worked</p>${result.worked}
                         </div>
                         <div class="text-slate-500">
-                            <p class="text-[6px] opacity-50 uppercase">Req</p>${result.req}
+                            <p class="text-[5px] opacity-50 uppercase">Req</p>${result.req}
+                            ${result.isShort ? '<p class="text-red-500 text-[6px] font-black">SHORT</p>' : ''}
                         </div>
                     </div>    
                     <div class="w-14 text-right leading-tight border-l border-slate-100 px-1">    
                         <div class="text-[8px] font-black ${result.ot > 0 ? 'text-blue-600' : 'text-slate-300'}">${result.ot} OT</div>
                         <div class="text-[8px] font-black ${result.specialOt > 0 ? 'text-red-600' : 'text-slate-300'}">${result.specialOt} SOT</div>
-                        ${result.lieu ? '<div class="text-[7px] font-bold text-green-600">LIEU</div>' : ''}
+                        ${result.lieu ? '<div class="text-[6px] font-bold text-green-600">LIEU</div>' : ''}
                     </div>    
                 `;    
                 container.appendChild(row);    
             }    
             document.getElementById('totalHrs').innerHTML = `    
-                <span class="text-blue-200 text-xs">OT: ${totalOT.toFixed(1)}</span> |     
-                <span class="text-red-200 text-xs">SOT: ${totalSpecialOT.toFixed(1)}</span> |     
-                <span class="text-green-200 text-xs">Lieu: ${totalLieu}</span>    
+                <div class="flex flex-wrap gap-2 justify-center">
+                    <span class="text-blue-200 text-[10px]">OT: ${totalOT.toFixed(1)}</span>
+                    <span class="text-red-200 text-[10px]">SOT: ${totalSpecialOT.toFixed(1)}</span>
+                    <span class="text-green-200 text-[10px]">Lieu: ${totalLieu}</span>
+                    <span class="${totalShort > 2 ? 'text-yellow-400' : 'text-white'} text-[10px]">Shorts: ${totalShort}/2</span>
+                </div>
             `;    
         }    
     
@@ -252,18 +245,15 @@
             await setDoc(doc(db, "users", auth.currentUser.uid, "months", monthId), { [String(day)]: { [type]: value } }, { merge: true });    
             renderSheet();    
         };    
-    
         window.switchTab = (tab) => {    
             document.getElementById('sheetView').classList.toggle('hidden', tab !== 'sheet');    
             document.getElementById('holidayView').classList.toggle('hidden', tab !== 'holidays');    
             document.getElementById('tabSheet').className = tab === 'sheet' ? 'flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase' : 'flex-1 py-4 text-slate-400 font-bold text-xs uppercase';    
             document.getElementById('tabHolidays').className = tab === 'holidays' ? 'flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase' : 'flex-1 py-4 text-slate-400 font-bold text-xs uppercase';    
         };    
-    
         window.handleLogin = () => signInWithEmailAndPassword(auth, document.getElementById('email').value, document.getElementById('pass').value).catch(err => alert("Login Failed: " + err.message));    
         window.logout = () => signOut(auth);    
         window.renderSheet = renderSheet;    
-    
     </script>    
 </head>    
 <body class="bg-slate-50 min-h-screen text-slate-900 font-sans">    
@@ -288,10 +278,7 @@
         <div id="sheetView" class="p-4">    
             <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6">    
                 <div class="flex justify-between items-center mb-4">    
-                    <div>    
-                        <p class="text-[10px] font-black uppercase opacity-60 mb-1">Calculations</p>    
-                        <h2 id="totalHrs" class="text-sm font-black">OT: 0.0 | SOT: 0.0</h2>    
-                    </div>    
+                    <div id="totalHrs"></div>    
                     <button onclick="logout()" class="bg-white/20 text-[8px] px-3 py-2 rounded-lg font-black uppercase">Logout</button>
                 </div>
                 <div class="flex gap-2">    
@@ -315,9 +302,9 @@
     
         <div id="holidayView" class="hidden p-6">    
             <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 mb-6">    
-                <h3 class="font-black mb-4 uppercase text-xs">Add Holiday</h3>    
+                <h3 class="font-black mb-4 uppercase text-xs text-slate-400">Add Special Holiday</h3>    
                 <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none">    
-                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition">ADD TO LIST</button>    
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg">ADD TO LIST</button>    
             </div>    
             <div id="holidayList"></div>    
         </div>    
