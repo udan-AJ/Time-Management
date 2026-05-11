@@ -109,10 +109,9 @@
             return "00:00";
         }
 
-        // --- නවීකරණය කළ ගණනය කිරීමේ තර්කය ---
+        // --- නව ගණනය කිරීමේ තර්කය ---
         function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay, wasFullDayShift) {
             if (!inTime || !outTime || inTime === "00:00" || outTime === "00:00") {
-                // කලින් දවසේ පැය 18ක් කළා නම් අද Required hours 0යි
                 let req = (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) ? 0 : 9;
                 return { worked: 0, req: req, ot: 0, specialOt: 0, lieu: false, isFullDay: false };
             }
@@ -127,14 +126,14 @@
             let decimalPart = actualHours - integerPart;
             let roundedWorked = integerPart + (decimalPart < 0.25 ? 0.0 : (decimalPart < 0.55 ? 0.5 : 1.0));
 
-            // Full-day shift ද කියා බැලීම (පැය 15කට වඩා වැඩි නම් Full-day ලෙස උපකල්පනය කෙරේ)
+            // පැය 15කට වඩා වැඩ කර ඇත්නම් එය Full-day (Day/Night) ලෙස සලකයි
             let isFullDay = roundedWorked >= 15; 
             let requiredHours = 9;
 
             if (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) {
                 requiredHours = 0;
             } else if (isFullDay) {
-                requiredHours = 18; // අද සහ හෙට දින දෙකම ආවරණය වේ
+                requiredHours = 18; 
             }
 
             if (dayOfWeek === 0 || isHoliday) {
@@ -205,7 +204,6 @@
                 
                 const result = calculateRow(dayData.in, dayData.out, isHoliday, dayOfWeek, dayData.isNextDay, lastDayWasFullShift);
                 
-                // ඊළඟ දවස සඳහා තොරතුරු තබා ගැනීම
                 lastDayWasFullShift = result.isFullDay;
 
                 totalOT += result.ot;
@@ -283,4 +281,46 @@
     
     <div id="appScreen" class="hidden max-w-lg mx-auto">    
         <div class="bg-white flex text-center border-b border-slate-200 sticky top-0 z-20">    
-            <button id="tabSheet
+            <button id="tabSheet" onclick="switchTab('sheet')" class="flex-1 py-4 text-blue-600 border-b-4 border-blue-600 font-black text-xs uppercase">Daily Sheet</button>    
+            <button id="tabHolidays" onclick="switchTab('holidays')" class="flex-1 py-4 text-slate-400 font-bold text-xs uppercase">Holidays List</button>    
+        </div>    
+    
+        <div id="sheetView" class="p-4">    
+            <div class="bg-blue-600 p-6 rounded-[2.5rem] text-white shadow-2xl mb-6">    
+                <div class="flex justify-between items-center mb-4">    
+                    <div>    
+                        <p class="text-[10px] font-black uppercase opacity-60 mb-1">Calculations</p>    
+                        <h2 id="totalHrs" class="text-sm font-black">OT: 0.0 | SOT: 0.0</h2>    
+                    </div>    
+                    <button onclick="logout()" class="bg-white/20 text-[8px] px-3 py-2 rounded-lg font-black uppercase">Logout</button>
+                </div>
+                <div class="flex gap-2">    
+                    <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none flex-1">    
+                        <option value="2026" selected>2026</option><option value="2025">2025</option>    
+                    </select>    
+                    <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 text-[10px] p-2 rounded-xl font-bold border border-white/10 outline-none flex-1">    
+                        <option value="0">JANUARY</option><option value="1">FEBRUARY</option><option value="2">MARCH</option>    
+                        <option value="3" selected>APRIL</option><option value="4">MAY</option><option value="5">JUNE</option>    
+                        <option value="6">JULY</option><option value="7">AUGUST</option><option value="8">SEPTEMBER</option>    
+                        <option value="9">OCTOBER</option><option value="10">NOVEMBER</option><option value="11">DECEMBER</option>    
+                    </select>    
+                </div>    
+                <div class="flex gap-2 mt-4">
+                    <button onclick="importExcel()" class="flex-1 bg-white text-blue-600 text-[10px] py-3 rounded-xl font-black uppercase shadow-lg">Import Excel</button>
+                    <button onclick="clearMonthData()" class="flex-1 bg-red-500 text-white text-[10px] py-3 rounded-xl font-black uppercase shadow-lg">Clear Month</button>
+                </div>
+            </div>    
+            <div id="sheetContainer" class="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden"></div>    
+        </div>    
+    
+        <div id="holidayView" class="hidden p-6">    
+            <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 mb-6">    
+                <h3 class="font-black mb-4 uppercase text-xs">Add Holiday</h3>    
+                <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none">    
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition">ADD TO LIST</button>    
+            </div>    
+            <div id="holidayList"></div>    
+        </div>    
+    </div>    
+</body>    
+</html>
