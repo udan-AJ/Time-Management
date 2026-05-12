@@ -120,12 +120,14 @@
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
             
-            // Time එක 00:00 නම් calculation එකට ගන්න එපා
-            let totalMinutes = (inTime && outTime && inTime !== "00:00" && outTime !== "00:00") ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
-            if (isNextDay) totalMinutes += 1440;
+            // 00:00 naki ewa check kirima
+            const hasData = (inTime && outTime && inTime !== "00:00" && outTime !== "00:00");
+            
+            let totalMinutes = hasData ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
+            if (hasData && isNextDay) totalMinutes += 1440;
 
             let shortLeaveBonusMinutes = 0;
-            if (leaveData && leaveData.type === "Short Leave") {
+            if (hasData && leaveData && leaveData.type === "Short Leave") {
                 if (leaveData.slot === "Morning") {
                     let arrivalMin = h1 * 60 + m1;
                     shortLeaveBonusMinutes = Math.min(90, Math.max(0, arrivalMin - (8 * 60 + 30)));
@@ -138,9 +140,11 @@
             let finalMinutes = totalMinutes + shortLeaveBonusMinutes;
             let hWork = Math.floor(finalMinutes / 60);
             let mWork = finalMinutes % 60;
-            let roundedWorked = hWork + (mWork >= 25 && mWork <= 54 ? 0.5 : (mWork >= 55 ? 1.0 : 0));
+            let roundedWorked = hasData ? (hWork + (mWork >= 25 && mWork <= 54 ? 0.5 : (mWork >= 55 ? 1.0 : 0))) : 0;
 
             let isFullDay = roundedWorked >= 15; 
+            
+            // Req logic eka data nathi unath dawsata anuwa pennanna force kirima
             let req = (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) ? 0 : 9;
 
             if (leaveData) {
@@ -163,7 +167,6 @@
             let ot = (dayOfWeek === 0 || isHoliday) ? 0 : Math.max(0, roundedWorked - req);
             let sOT = (dayOfWeek === 0 || isHoliday) ? roundedWorked : 0;
 
-            // worked time 0 නම් OT/SOT 0 කරන්න
             if (roundedWorked === 0) { ot = 0; sOT = 0; }
 
             return { worked: roundedWorked, req, ot, sOT, lieu: (dayOfWeek === 0 || isHoliday) && roundedWorked >= 9, isFullDay, isShort };
@@ -196,7 +199,6 @@
                 lastDayWasFullShift = res.isFullDay;
                 tOT += res.ot; tSOT += res.sOT; if(res.lieu) tLieu++; if(res.isShort) tShort++;
                 
-                // Display වෙද්දී 00:00 නම් empty පෙන්වීමට
                 const displayIn = dayData.in === "00:00" ? "" : dayData.in;
                 const displayOut = dayData.out === "00:00" ? "" : dayData.out;
     
@@ -213,11 +215,11 @@
                     </div>
                     <div class="w-20 text-center text-[8px] font-bold border-x px-1 leading-tight">
                         <p class="text-blue-600 truncate uppercase">${leaveData ? leaveData.type : '-'}</p>
-                        <div class="flex justify-between mt-1"><span class="text-slate-400">W:${res.worked}</span><span class="text-red-500">R:${res.req}</span></div>
+                        <div class="flex justify-between mt-1"><span class="text-slate-400">W:${res.worked || '-'}</span><span class="text-red-500">R:${res.req}</span></div>
                     </div>    
                     <div class="w-12 text-right">    
-                        <div class="text-[8px] font-black text-blue-600">${res.ot}</div>
-                        <div class="text-[8px] font-black text-red-600">${res.sOT}</div>
+                        <div class="text-[8px] font-black text-blue-600">${res.ot || ''}</div>
+                        <div class="text-[8px] font-black text-red-600">${res.sOT || ''}</div>
                     </div>    
                 `;    
                 container.appendChild(row);    
@@ -332,7 +334,4 @@
                 <h3 class="font-black text-xs uppercase mb-4 text-slate-400">Add Holiday</h3>
                 <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border rounded-xl mb-4 outline-none">    
                 <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-xl shadow-lg">ADD TO LIST</button>
-            </div>
-            <div id="holidayList"></div>
-        </div>    
-    </div>    
+            </
