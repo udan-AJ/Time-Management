@@ -41,7 +41,6 @@
             }    
         });    
 
-        // --- DATA SYNC ---
         async function loadLeaves() {
             const user = auth.currentUser;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
@@ -58,7 +57,6 @@
             renderHolidayList();
         }
 
-        // --- HOLIDAY MGMT ---
         window.addHoliday = async () => {    
             const date = document.getElementById('holidayInput').value;    
             if (!date) return;    
@@ -84,7 +82,6 @@
             `).join('') || `<p class="text-slate-400 text-[10px] text-center py-4">No Holidays Added</p>`;    
         }
 
-        // --- LEAVE MGMT ---
         window.saveLeave = async () => {
             const dateInput = document.getElementById('leaveDate').value;
             const type = document.getElementById('leaveType').value;
@@ -119,15 +116,31 @@
             `).join('') || `<p class="text-slate-400 text-[10px] text-center py-4">No leaves recorded.</p>`;
         }
 
-        // --- CALCULATION ENGINE ---
         function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay, wasFullDayShift, leaveData) {
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
             let totalMinutes = (inTime && outTime && inTime !== "00:00") ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
             if (isNextDay) totalMinutes += 1440;
+
+            // --- Short Leave Time Addition Logic ---
+            let shortLeaveBonusMinutes = 0;
+            if (leaveData && leaveData.type === "Short Leave") {
+                if (leaveData.slot === "Morning") {
+                    // 08:30 සිට පැමිණි වෙලාව දක්වා කාලය එකතු කරයි (පැය 1.5 උපරිම)
+                    let startMin = 8 * 60 + 30;
+                    let arrivalMin = h1 * 60 + m1;
+                    shortLeaveBonusMinutes = Math.min(90, Math.max(0, arrivalMin - startMin));
+                } else if (leaveData.slot === "Evening") {
+                    // පිටවූ වෙලාවේ සිට 17:00 දක්වා කාලය එකතු කරයි (පැය 1.5 උපරිම)
+                    let exitMin = h2 * 60 + m2;
+                    let endMin = 17 * 60;
+                    shortLeaveBonusMinutes = Math.min(90, Math.max(0, endMin - exitMin));
+                }
+            }
             
-            let hWork = Math.floor(totalMinutes / 60);
-            let mWork = totalMinutes % 60;
+            let finalMinutes = totalMinutes + shortLeaveBonusMinutes;
+            let hWork = Math.floor(finalMinutes / 60);
+            let mWork = finalMinutes % 60;
             let roundedWorked = hWork + (mWork >= 25 && mWork <= 54 ? 0.5 : (mWork >= 55 ? 1.0 : 0));
 
             let isFullDay = roundedWorked >= 15; 
@@ -138,18 +151,23 @@
                     req = isFullDay ? 9 : 0; 
                 } else if (leaveData.type === "Half Day") {
                     req = Math.max(0, req - 4.5);
-                } else if (leaveData.type === "Short Leave") {
-                    req = Math.max(0, req - 1.5);
                 }
+                // Short leave එකකදී Req 9ම පවතී, නමුත් worked පැය වැඩි වේ.
             } else if (isFullDay && req > 0) {
                 req = 18; 
             }
 
             let isShort = false;
             if (roundedWorked > 0 && !leaveData) {
-                if (isFullDay) { if (h1*60+m1 > 525 || !isNextDay || (isNextDay && h2*60+m2 < 295)) isShort = true; }
-                else if (isNextDay) { if (h1*60+m1 > 1200 || h2*60+m2 < 300) isShort = true; }
-                else { if (h1*60+m1 > 525 || h2*60+m2 < 1020) isShort = true; }
+                // Short Indicator for Night shifts also (8:00pm - 9:30pm and 3:30am - 5:00am)
+                if (isFullDay) { 
+                    if (h1*60+m1 > 525 || !isNextDay || (isNextDay && h2*60+m2 < 295)) isShort = true; 
+                } else if (isNextDay) { 
+                    // Night Shift Short logic
+                    if (h1*60+m1 > 1200 || h2*60+m2 < 300) isShort = true; 
+                } else { 
+                    if (h1*60+m1 > 525 || h2*60+m2 < 1020) isShort = true; 
+                }
             }
 
             let ot = (dayOfWeek === 0 || isHoliday) ? 0 : Math.max(0, roundedWorked - req);
@@ -158,7 +176,6 @@
             return { worked: roundedWorked, req, ot, sOT, lieu: (dayOfWeek === 0 || isHoliday) && roundedWorked >= 9, isFullDay, isShort };
         }
 
-        // --- UI RENDERING ---
         async function renderSheet() {    
             const user = auth.currentUser;    
             const month = parseInt(document.getElementById('monthSelect').value);    
@@ -177,8 +194,7 @@
     
             for (let d = 1; d <= daysInMonth; d++) {    
                 const dateObj = new Date(year, month, d);
-                const dateStr = dateObj.toLocaleDateString('en-CA');
-                const isHoliday = userHolidays.includes(dateStr);    
+                const isHoliday = userHolidays.includes(dateObj.toLocaleDateString('en-CA'));    
                 const dayData = savedData[String(d)] || { in: "00:00", out: "00:00", isNextDay: false };    
                 const leaveData = userLeaves[d];
 
@@ -211,7 +227,6 @@
             document.getElementById('totalHrs').innerHTML = `OT: ${tOT.toFixed(1)} | SOT: ${tSOT.toFixed(1)} | Lieu: ${tLieu} | Short: ${tShort}/2`;    
         }
 
-        // --- UTILS ---
         window.switchTab = (tab) => {
             ['sheetView', 'holidayView', 'leaveView'].forEach(v => document.getElementById(v).classList.add('hidden'));
             document.getElementById(tab + 'View').classList.remove('hidden');
