@@ -119,7 +119,9 @@
         function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay, wasFullDayShift, leaveData, isLastDay) {
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
-            let totalMinutes = (inTime && outTime && inTime !== "00:00") ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
+            
+            // FIX: In හෝ Out දෙකෙන් එකක් හෝ 00:00 නම් පැය 24ක් ලෙස ගණන් ගැනීම වැළැක්වීමට
+            let totalMinutes = (inTime && outTime && inTime !== "00:00" && outTime !== "00:00") ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
             if (isNextDay) totalMinutes += 1440;
 
             let shortLeaveBonusMinutes = 0;
@@ -148,7 +150,6 @@
                     req = Math.max(0, req - 4.5);
                 }
             } else if (isFullDay && req > 0) {
-                // මාසයේ අවසාන දිනය නම් පැය 9ක් පමණක් Req ලෙස ගනී
                 req = isLastDay ? 9 : 18; 
             }
 
@@ -223,7 +224,8 @@
         };
 
         function cleanTime(val) {
-            if (!val || val === "-") return "00:00";
+            // FIX: හිස් හෝ 00:00 අගයන් නිවැරදිව හඳුනා ගැනීමට
+            if (!val || val === "-" || val === "" || val === "00:00") return "00:00";
             let m = String(val).match(/(\d{1,2}):(\d{1,2})/);
             return m ? `${m[1].padStart(2,'0')}:${m[2].padStart(2,'0')}` : "00:00";
         }
