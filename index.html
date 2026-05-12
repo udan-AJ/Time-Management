@@ -120,7 +120,7 @@
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
             
-            // FIX: In හෝ Out දෙකෙන් එකක් හෝ 00:00 නම් පැය 24ක් ලෙස ගණන් ගැනීම වැළැක්වීමට
+            // Time එක 00:00 නම් calculation එකට ගන්න එපා
             let totalMinutes = (inTime && outTime && inTime !== "00:00" && outTime !== "00:00") ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
             if (isNextDay) totalMinutes += 1440;
 
@@ -163,6 +163,9 @@
             let ot = (dayOfWeek === 0 || isHoliday) ? 0 : Math.max(0, roundedWorked - req);
             let sOT = (dayOfWeek === 0 || isHoliday) ? roundedWorked : 0;
 
+            // worked time 0 නම් OT/SOT 0 කරන්න
+            if (roundedWorked === 0) { ot = 0; sOT = 0; }
+
             return { worked: roundedWorked, req, ot, sOT, lieu: (dayOfWeek === 0 || isHoliday) && roundedWorked >= 9, isFullDay, isShort };
         }
 
@@ -192,6 +195,10 @@
                 const res = calculateRow(dayData.in, dayData.out, isHoliday, dateObj.getDay(), dayData.isNextDay, lastDayWasFullShift, leaveData, isLastDay);
                 lastDayWasFullShift = res.isFullDay;
                 tOT += res.ot; tSOT += res.sOT; if(res.lieu) tLieu++; if(res.isShort) tShort++;
+                
+                // Display වෙද්දී 00:00 නම් empty පෙන්වීමට
+                const displayIn = dayData.in === "00:00" ? "" : dayData.in;
+                const displayOut = dayData.out === "00:00" ? "" : dayData.out;
     
                 const row = document.createElement('div');    
                 row.className = `flex items-center gap-1 p-3 border-b ${isHoliday ? 'bg-red-50' : (dateObj.getDay() === 0 ? 'bg-orange-50' : 'bg-white')}`;    
@@ -201,8 +208,8 @@
                         <span class="text-base font-black text-slate-700 leading-none">${d}</span>    
                     </div>    
                     <div class="flex-1 grid grid-cols-2 gap-1 opacity-80">    
-                        <input type="time" value="${dayData.in}" class="p-1 rounded-lg border text-[10px] bg-slate-50" readonly>
-                        <div class="relative"><input type="time" value="${dayData.out}" class="w-full p-1 rounded-lg border text-[10px] bg-slate-50" readonly></div>
+                        <input type="time" value="${displayIn}" class="p-1 rounded-lg border text-[10px] bg-slate-50" readonly>
+                        <div class="relative"><input type="time" value="${displayOut}" class="w-full p-1 rounded-lg border text-[10px] bg-slate-50" readonly></div>
                     </div>
                     <div class="w-20 text-center text-[8px] font-bold border-x px-1 leading-tight">
                         <p class="text-blue-600 truncate uppercase">${leaveData ? leaveData.type : '-'}</p>
@@ -224,7 +231,6 @@
         };
 
         function cleanTime(val) {
-            // FIX: හිස් හෝ 00:00 අගයන් නිවැරදිව හඳුනා ගැනීමට
             if (!val || val === "-" || val === "" || val === "00:00") return "00:00";
             let m = String(val).match(/(\d{1,2}):(\d{1,2})/);
             return m ? `${m[1].padStart(2,'0')}:${m[2].padStart(2,'0')}` : "00:00";
@@ -330,5 +336,3 @@
             <div id="holidayList"></div>
         </div>    
     </div>    
-</body>    
-</html>
