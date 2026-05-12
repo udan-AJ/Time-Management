@@ -116,25 +116,20 @@
             `).join('') || `<p class="text-slate-400 text-[10px] text-center py-4">No leaves recorded.</p>`;
         }
 
-        function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay, wasFullDayShift, leaveData) {
+        function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay, wasFullDayShift, leaveData, isLastDay) {
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
             let totalMinutes = (inTime && outTime && inTime !== "00:00") ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
             if (isNextDay) totalMinutes += 1440;
 
-            // --- Short Leave Time Addition Logic ---
             let shortLeaveBonusMinutes = 0;
             if (leaveData && leaveData.type === "Short Leave") {
                 if (leaveData.slot === "Morning") {
-                    // 08:30 සිට පැමිණි වෙලාව දක්වා කාලය එකතු කරයි (පැය 1.5 උපරිම)
-                    let startMin = 8 * 60 + 30;
                     let arrivalMin = h1 * 60 + m1;
-                    shortLeaveBonusMinutes = Math.min(90, Math.max(0, arrivalMin - startMin));
+                    shortLeaveBonusMinutes = Math.min(90, Math.max(0, arrivalMin - (8 * 60 + 30)));
                 } else if (leaveData.slot === "Evening") {
-                    // පිටවූ වෙලාවේ සිට 17:00 දක්වා කාලය එකතු කරයි (පැය 1.5 උපරිම)
                     let exitMin = h2 * 60 + m2;
-                    let endMin = 17 * 60;
-                    shortLeaveBonusMinutes = Math.min(90, Math.max(0, endMin - exitMin));
+                    shortLeaveBonusMinutes = Math.min(90, Math.max(0, (17 * 60) - exitMin));
                 }
             }
             
@@ -152,22 +147,16 @@
                 } else if (leaveData.type === "Half Day") {
                     req = Math.max(0, req - 4.5);
                 }
-                // Short leave එකකදී Req 9ම පවතී, නමුත් worked පැය වැඩි වේ.
             } else if (isFullDay && req > 0) {
-                req = 18; 
+                // මාසයේ අවසාන දිනය නම් පැය 9ක් පමණක් Req ලෙස ගනී
+                req = isLastDay ? 9 : 18; 
             }
 
             let isShort = false;
             if (roundedWorked > 0 && !leaveData) {
-                // Short Indicator for Night shifts also (8:00pm - 9:30pm and 3:30am - 5:00am)
-                if (isFullDay) { 
-                    if (h1*60+m1 > 525 || !isNextDay || (isNextDay && h2*60+m2 < 295)) isShort = true; 
-                } else if (isNextDay) { 
-                    // Night Shift Short logic
-                    if (h1*60+m1 > 1200 || h2*60+m2 < 300) isShort = true; 
-                } else { 
-                    if (h1*60+m1 > 525 || h2*60+m2 < 1020) isShort = true; 
-                }
+                if (isFullDay) { if (h1*60+m1 > 525 || !isNextDay || (isNextDay && h2*60+m2 < 295)) isShort = true; }
+                else if (isNextDay) { if (h1*60+m1 > 1200 || h2*60+m2 < 300) isShort = true; }
+                else { if (h1*60+m1 > 525 || h2*60+m2 < 1020) isShort = true; }
             }
 
             let ot = (dayOfWeek === 0 || isHoliday) ? 0 : Math.max(0, roundedWorked - req);
@@ -197,8 +186,9 @@
                 const isHoliday = userHolidays.includes(dateObj.toLocaleDateString('en-CA'));    
                 const dayData = savedData[String(d)] || { in: "00:00", out: "00:00", isNextDay: false };    
                 const leaveData = userLeaves[d];
+                const isLastDay = (d === daysInMonth);
 
-                const res = calculateRow(dayData.in, dayData.out, isHoliday, dateObj.getDay(), dayData.isNextDay, lastDayWasFullShift, leaveData);
+                const res = calculateRow(dayData.in, dayData.out, isHoliday, dateObj.getDay(), dayData.isNextDay, lastDayWasFullShift, leaveData, isLastDay);
                 lastDayWasFullShift = res.isFullDay;
                 tOT += res.ot; tSOT += res.sOT; if(res.lieu) tLieu++; if(res.isShort) tShort++;
     
@@ -303,7 +293,7 @@
                 <div class="flex gap-2 mb-4">    
                     <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 p-2 rounded-xl text-[10px] flex-1"><option>2026</option></select>    
                     <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 p-2 rounded-xl text-[10px] flex-1">
-                        <option value="3">APRIL</option><option value="4">MAY</option>
+                        <option value="3" selected>APRIL</option><option value="4">MAY</option>
                     </select>    
                 </div>    
                 <div class="flex gap-2">
