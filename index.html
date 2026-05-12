@@ -41,7 +41,7 @@
             }    
         });    
 
-        // --- DATA LOADING ---
+        // --- DATA SYNC ---
         async function loadLeaves() {
             const user = auth.currentUser;
             const monthId = `${document.getElementById('yearSelect').value}-${parseInt(document.getElementById('monthSelect').value) + 1}`;
@@ -55,19 +55,44 @@
             const querySnapshot = await getDocs(q);    
             userHolidays = [];    
             querySnapshot.forEach((doc) => userHolidays.push(doc.id));    
+            renderHolidayList();
         }
 
-        // --- LEAVE LOGIC ---
+        // --- HOLIDAY MGMT ---
+        window.addHoliday = async () => {    
+            const date = document.getElementById('holidayInput').value;    
+            if (!date) return;    
+            await setDoc(doc(db, "users", auth.currentUser.uid, "holidays", date), { active: true });    
+            await loadHolidays();    
+            renderSheet();    
+        };    
+    
+        window.removeHoliday = async (date) => {    
+            await deleteDoc(doc(db, "users", auth.currentUser.uid, "holidays", date));    
+            await loadHolidays();    
+            renderSheet();    
+        };
+
+        function renderHolidayList() {    
+            const list = document.getElementById('holidayList');
+            if(!list) return;
+            list.innerHTML = userHolidays.map(date => `    
+                <div class="flex justify-between items-center p-3 bg-white rounded-xl mb-2 border border-slate-100 shadow-sm">    
+                    <span class="font-bold text-slate-700 text-xs">${date}</span>    
+                    <button onclick="removeHoliday('${date}')" class="text-red-500 text-[10px] font-black uppercase">Remove</button>    
+                </div>    
+            `).join('') || `<p class="text-slate-400 text-[10px] text-center py-4">No Holidays Added</p>`;    
+        }
+
+        // --- LEAVE MGMT ---
         window.saveLeave = async () => {
             const dateInput = document.getElementById('leaveDate').value;
             const type = document.getElementById('leaveType').value;
             const slot = document.getElementById('leaveSlot').value;
-            if(!dateInput) return alert("දිනය තෝරන්න");
-
+            if(!dateInput) return alert("Select Date");
             const dateObj = new Date(dateInput);
             const day = dateObj.getDate();
             const monthId = `${dateObj.getFullYear()}-${dateObj.getMonth() + 1}`;
-            
             userLeaves[day] = { type, slot };
             await setDoc(doc(db, "users", auth.currentUser.uid, "leaves", monthId), userLeaves, { merge: true });
             alert("Leave Saved!");
@@ -85,26 +110,20 @@
 
         function renderLeaveList() {
             const list = document.getElementById('leaveList');
+            if(!list) return;
             list.innerHTML = Object.entries(userLeaves).map(([day, data]) => `
-                <div class="flex justify-between items-center p-3 bg-white rounded-xl mb-2 border border-slate-100 shadow-sm">
+                <div class="flex justify-between items-center p-3 bg-white rounded-xl mb-2 border border-slate-100">
                     <div class="text-[10px] font-bold text-slate-600">Day ${day} - ${data.type} (${data.slot})</div>
                     <button onclick="deleteLeave('${day}')" class="text-red-500 text-[10px] font-black uppercase">Delete</button>
                 </div>
             `).join('') || `<p class="text-slate-400 text-[10px] text-center py-4">No leaves recorded.</p>`;
         }
 
-        // --- CALCULATION LOGIC ---
+        // --- CALCULATION ENGINE ---
         function calculateRow(inTime, outTime, isHoliday, dayOfWeek, isNextDay, wasFullDayShift, leaveData) {
-            if (!inTime || !outTime || inTime === "00:00") {
-                let req = (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) ? 0 : 9;
-                if (leaveData && (leaveData.type === "Full Leave" || leaveData.type === "Lieu Leave")) req = 0;
-                if (leaveData && leaveData.type === "Half Day") req = 4.5;
-                return { worked: 0, req, ot: 0, specialOt: 0, lieu: false, isFullDay: false, isShort: false };
-            }
-
             let [h1, m1] = inTime.split(':').map(Number);
             let [h2, m2] = outTime.split(':').map(Number);
-            let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
+            let totalMinutes = (inTime && outTime && inTime !== "00:00") ? ((h2 * 60 + m2) - (h1 * 60 + m1)) : 0;
             if (isNextDay) totalMinutes += 1440;
             
             let hWork = Math.floor(totalMinutes / 60);
@@ -112,41 +131,34 @@
             let roundedWorked = hWork + (mWork >= 25 && mWork <= 54 ? 0.5 : (mWork >= 55 ? 1.0 : 0));
 
             let isFullDay = roundedWorked >= 15; 
-            let requiredHours = (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) ? 0 : 9;
+            let req = (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday || wasFullDayShift) ? 0 : 9;
 
-            // Apply Leave Reductions to Required Hours
             if (leaveData) {
                 if (leaveData.type === "Full Leave" || leaveData.type === "Lieu Leave") {
-                    requiredHours = isFullDay ? 9 : 0; 
+                    req = isFullDay ? 9 : 0; 
                 } else if (leaveData.type === "Half Day") {
-                    requiredHours = 4.5;
+                    req = Math.max(0, req - 4.5);
+                } else if (leaveData.type === "Short Leave") {
+                    req = Math.max(0, req - 1.5);
                 }
-            } else if (isFullDay) {
-                requiredHours = 18; 
+            } else if (isFullDay && req > 0) {
+                req = 18; 
             }
 
-            // Short Time Check
             let isShort = false;
-            let inTotal = h1 * 60 + m1;
-            let outTotal = h2 * 60 + m2;
-            if (isFullDay) {
-                if (inTotal > 525 || !isNextDay || (isNextDay && outTotal < 295)) isShort = true;
-            } else if (isNextDay) {
-                if (inTotal > 1200 || outTotal < 300) isShort = true;
-            } else {
-                if (inTotal > 525 || outTotal < 1020) isShort = true;
+            if (roundedWorked > 0 && !leaveData) {
+                if (isFullDay) { if (h1*60+m1 > 525 || !isNextDay || (isNextDay && h2*60+m2 < 295)) isShort = true; }
+                else if (isNextDay) { if (h1*60+m1 > 1200 || h2*60+m2 < 300) isShort = true; }
+                else { if (h1*60+m1 > 525 || h2*60+m2 < 1020) isShort = true; }
             }
 
-            if (dayOfWeek === 0 || isHoliday) {
-                return { worked: roundedWorked, req: requiredHours, ot: 0, specialOt: roundedWorked, lieu: roundedWorked >= 9, isFullDay, isShort };
-            } else if (dayOfWeek === 6) {
-                return { worked: roundedWorked, req: requiredHours, ot: roundedWorked, specialOt: 0, lieu: false, isFullDay, isShort };
-            } else {
-                return { worked: roundedWorked, req: requiredHours, ot: Math.max(0, roundedWorked - requiredHours), specialOt: 0, lieu: false, isFullDay, isShort };
-            }
+            let ot = (dayOfWeek === 0 || isHoliday) ? 0 : Math.max(0, roundedWorked - req);
+            let sOT = (dayOfWeek === 0 || isHoliday) ? roundedWorked : 0;
+
+            return { worked: roundedWorked, req, ot, sOT, lieu: (dayOfWeek === 0 || isHoliday) && roundedWorked >= 9, isFullDay, isShort };
         }
 
-        // --- UI RENDER ---
+        // --- UI RENDERING ---
         async function renderSheet() {    
             const user = auth.currentUser;    
             const month = parseInt(document.getElementById('monthSelect').value);    
@@ -154,8 +166,8 @@
             const container = document.getElementById('sheetContainer');    
             const daysInMonth = new Date(year, month + 1, 0).getDate();    
             const monthId = `${year}-${month + 1}`;    
-                
-            container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs font-bold'>SYNCING CLOUD...</div>";    
+            
+            container.innerHTML = "<div class='p-10 text-center text-slate-400 text-xs font-bold'>LOADING...</div>";    
             const docSnap = await getDoc(doc(db, "users", user.uid, "months", monthId));    
             const savedData = docSnap.exists() ? docSnap.data() : {};    
 
@@ -172,7 +184,7 @@
 
                 const res = calculateRow(dayData.in, dayData.out, isHoliday, dateObj.getDay(), dayData.isNextDay, lastDayWasFullShift, leaveData);
                 lastDayWasFullShift = res.isFullDay;
-                tOT += res.ot; tSOT += res.specialOt; if(res.lieu) tLieu++; if(res.isShort) tShort++;
+                tOT += res.ot; tSOT += res.sOT; if(res.lieu) tLieu++; if(res.isShort) tShort++;
     
                 const row = document.createElement('div');    
                 row.className = `flex items-center gap-1 p-3 border-b ${isHoliday ? 'bg-red-50' : (dateObj.getDay() === 0 ? 'bg-orange-50' : 'bg-white')}`;    
@@ -182,16 +194,16 @@
                         <span class="text-base font-black text-slate-700 leading-none">${d}</span>    
                     </div>    
                     <div class="flex-1 grid grid-cols-2 gap-1 opacity-80">    
-                        <input type="time" value="${dayData.in}" class="p-1 rounded-lg border text-[10px] bg-slate-50 outline-none" readonly>
-                        <div class="relative"><input type="time" value="${dayData.out}" class="w-full p-1 rounded-lg border text-[10px] bg-slate-50 outline-none" readonly></div>
+                        <input type="time" value="${dayData.in}" class="p-1 rounded-lg border text-[10px] bg-slate-50" readonly>
+                        <div class="relative"><input type="time" value="${dayData.out}" class="w-full p-1 rounded-lg border text-[10px] bg-slate-50" readonly></div>
                     </div>
                     <div class="w-20 text-center text-[8px] font-bold border-x px-1 leading-tight">
-                        <p class="text-blue-600 truncate">${leaveData ? leaveData.type.toUpperCase() : '-'}</p>
+                        <p class="text-blue-600 truncate uppercase">${leaveData ? leaveData.type : '-'}</p>
                         <div class="flex justify-between mt-1"><span class="text-slate-400">W:${res.worked}</span><span class="text-red-500">R:${res.req}</span></div>
                     </div>    
                     <div class="w-12 text-right">    
                         <div class="text-[8px] font-black text-blue-600">${res.ot}</div>
-                        <div class="text-[8px] font-black text-red-600">${res.specialOt}</div>
+                        <div class="text-[8px] font-black text-red-600">${res.sOT}</div>
                     </div>    
                 `;    
                 container.appendChild(row);    
@@ -199,11 +211,10 @@
             document.getElementById('totalHrs').innerHTML = `OT: ${tOT.toFixed(1)} | SOT: ${tSOT.toFixed(1)} | Lieu: ${tLieu} | Short: ${tShort}/2`;    
         }
 
-        // --- COMMON HELPERS ---
+        // --- UTILS ---
         window.switchTab = (tab) => {
             ['sheetView', 'holidayView', 'leaveView'].forEach(v => document.getElementById(v).classList.add('hidden'));
             document.getElementById(tab + 'View').classList.remove('hidden');
-            if(tab === 'leave') loadLeaves();
         };
 
         function cleanTime(val) {
@@ -252,20 +263,20 @@
     </script>    
 </head>    
 <body class="bg-slate-50 min-h-screen text-slate-900 font-sans pb-12">    
-    <div id="authScreen" class="max-w-md mx-auto pt-24 px-6">    
-        <div class="bg-white p-10 rounded-[3rem] shadow-2xl text-center border">    
-            <h1 class="text-2xl font-black mb-8">Secure Cloud</h1>    
-            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border outline-none">    
-            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border outline-none">    
-            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl">LOGIN</button>    
+    <div id="authScreen" class="max-w-md mx-auto pt-24 px-6 text-center">    
+        <div class="bg-white p-10 rounded-[3rem] shadow-2xl border">    
+            <h1 class="text-2xl font-black mb-8 text-blue-600">Secure Cloud</h1>    
+            <input type="email" id="email" placeholder="Email" class="w-full p-4 mb-3 bg-slate-50 rounded-2xl border outline-none text-sm">    
+            <input type="password" id="pass" placeholder="Password" class="w-full p-4 mb-8 bg-slate-50 rounded-2xl border outline-none text-sm">    
+            <button onclick="handleLogin()" class="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl">LOGIN</button>    
         </div>    
     </div>    
     
     <div id="appScreen" class="hidden max-w-lg mx-auto">    
-        <div class="bg-white flex text-center border-b sticky top-0 z-20">    
-            <button onclick="switchTab('sheet')" class="flex-1 py-4 font-black text-[10px] uppercase">Daily Sheet</button>    
-            <button onclick="switchTab('leave')" class="flex-1 py-4 font-black text-[10px] uppercase">Leaves</button>    
-            <button onclick="switchTab('holiday')" class="flex-1 py-4 font-black text-[10px] uppercase">Holidays</button>    
+        <div class="bg-white flex text-center border-b sticky top-0 z-20 shadow-sm">    
+            <button onclick="switchTab('sheet')" class="flex-1 py-4 font-black text-[10px] uppercase text-slate-500">Sheet</button>    
+            <button onclick="switchTab('leave')" class="flex-1 py-4 font-black text-[10px] uppercase text-slate-500">Leaves</button>    
+            <button onclick="switchTab('holiday')" class="flex-1 py-4 font-black text-[10px] uppercase text-slate-500">Holidays</button>    
         </div>    
     
         <div id="sheetView" class="p-4">    
@@ -275,8 +286,8 @@
                     <button onclick="logout()" class="text-[8px] font-black bg-white/20 px-2 py-1 rounded">LOGOUT</button>
                 </div>
                 <div class="flex gap-2 mb-4">    
-                    <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 p-2 rounded-xl text-[10px] flex-1 outline-none"><option>2026</option></select>    
-                    <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 p-2 rounded-xl text-[10px] flex-1 outline-none">
+                    <select id="yearSelect" onchange="renderSheet()" class="bg-white/20 p-2 rounded-xl text-[10px] flex-1"><option>2026</option></select>    
+                    <select id="monthSelect" onchange="renderSheet()" class="bg-white/20 p-2 rounded-xl text-[10px] flex-1">
                         <option value="3">APRIL</option><option value="4">MAY</option>
                     </select>    
                 </div>    
@@ -296,16 +307,20 @@
                     <option>Full Leave</option><option>Half Day</option><option>Short Leave</option><option>Lieu Leave</option>
                 </select>
                 <select id="leaveSlot" class="w-full p-3 bg-slate-50 border rounded-xl mb-4 text-sm outline-none">
-                    <option>Full Day</option><option>Morning (8:30-1:00)</option><option>Evening (1:00-5:30)</option>
+                    <option>Full Day</option><option>Morning</option><option>Evening</option>
                 </select>
-                <button onclick="saveLeave()" class="w-full bg-blue-600 text-white font-black py-4 rounded-xl shadow-lg">SAVE ENTRY</button>
+                <button onclick="saveLeave()" class="w-full bg-blue-600 text-white font-black py-4 rounded-xl shadow-lg">SAVE LEAVE</button>
             </div>
             <div id="leaveList"></div>
         </div>
     
-        <div id="holidayView" class="hidden p-6 text-center">    
-            <input type="date" id="holidayInput" class="w-full p-4 bg-white border rounded-xl mb-4 outline-none">    
-            <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-xl shadow-lg">ADD HOLIDAY</button>
+        <div id="holidayView" class="hidden p-6">    
+            <div class="bg-white p-6 rounded-[2.5rem] border shadow-sm mb-6">
+                <h3 class="font-black text-xs uppercase mb-4 text-slate-400">Add Holiday</h3>
+                <input type="date" id="holidayInput" class="w-full p-4 bg-slate-50 border rounded-xl mb-4 outline-none">    
+                <button onclick="addHoliday()" class="w-full bg-blue-600 text-white font-black py-4 rounded-xl shadow-lg">ADD TO LIST</button>
+            </div>
+            <div id="holidayList"></div>
         </div>    
     </div>    
 </body>    
